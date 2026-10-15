@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#172b32" />
+    <title>SANDI — склад и учёт</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <aside>
+        <div class="brand">
+          <div class="brand-mark">Т</div>
+          <div><strong>SANDI</strong><small>склад · учёт · продажи</small></div>
+        </div>
+        <div>
+          <p class="nav-label">Рабочие кабинеты</p>
+          <nav class="nav" id="nav">
+            <button data-page="director" class="active">
+              <span class="nav-icon">▦</span>Кабинет директора</button
+            ><button data-page="warehouse">
+              <span class="nav-icon">▤</span>Остатки склада</button
+            ><button data-page="customers">
+              <span class="nav-icon">♙</span>Клиентская база</button
+            ><button data-page="invoices">
+              <span class="nav-icon">▧</span>Накладные</button
+            ><button data-page="accounting">
+              <span class="nav-icon">↗</span>Бухгалтерия</button
+            ><button data-page="suppliers">
+              <span class="nav-icon">☏</span>Поставщики</button
+            ><button data-page="notebook">
+              <span class="nav-icon">▤</span>Заметки
+            </button>
+          </nav>
+        </div>
+        <div class="aside-bottom">
+          <b>Домашний текстиль</b><br />Локальный рабочий прототип<br /><span
+            id="storage-status"
+            >Данные сохраняются в браузере</span
+          >
+        </div>
+      </aside>
+      <main class="main">
+        <header class="topbar">
+          <button
+            class="mobile-toggle"
+            id="mobile-toggle"
+            aria-label="Открыть меню"
+          >
+            ☰
+          </button>
+          <div class="crumb" id="crumb">Учёт / Кабинет директора</div>
+          <div class="top-actions">
+            <div class="rate-chip" id="rate-chip">Курс: —</div>
+            <div class="avatar">Д</div>
+          </div>
+        </header>
+        <section id="view"></section>
+      </main>
+    </div>
+    <div id="overlay"></div>
+    <div id="toast-area" aria-live="polite"></div>
+    <script src="app.js" defer></script>
+  </body>
+</html>
