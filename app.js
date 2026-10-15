@@ -47,7 +47,9 @@
     clientId = "",
     supplierId = "",
     draft = [{ productId: "", qty: 1 }],
-    accountingPeriod = "month";
+    accountingPeriod = "month",
+    showArchivedProducts = false,
+    showArchivedSuppliers = false;
   const $ = (s) => document.querySelector(s),
     view = $("#view");
   const save = () => {
@@ -108,6 +110,29 @@
         (p.currency === "USD" ? n(p.fx) : 1) *
         (1 + n(p.markup) / 100),
     );
+  const clampDiscount = (value) => Math.min(100, Math.max(0, n(value)));
+  const invoiceLineAmount = (unitPrice, quantity, discountPercent = 0) =>
+    Math.round(
+      n(unitPrice) *
+        n(quantity) *
+        (1 - clampDiscount(discountPercent) / 100) *
+        100,
+    ) / 100;
+  const purchaseUnitCost = (p) => {
+    const receipts = db.receipts.filter((x) => x.productId === p.id);
+    const qty = receipts.reduce((sum, x) => sum + n(x.qty), 0);
+    if (!qty) return n(p.cost) * (p.currency === "USD" ? n(p.fx) : 1);
+    const amount = receipts.reduce((sum, x) => {
+      if (x.amount != null) return sum + n(x.amount);
+      const gross =
+        n(p.cost) * (p.currency === "USD" ? n(p.fx) : 1) * n(x.qty);
+      return (
+        sum +
+        Math.max(0, gross - n(x.discountAmount || gross * n(x.discountPercent) / 100))
+      );
+    }, 0);
+    return amount / qty;
+  };
   const stock = (p) =>
     db.receipts
       .filter((x) => x.productId === p)
@@ -292,7 +317,7 @@
       .join("");
   const productOpts = () =>
       opts(
-        db.products.map((p) => ({
+        db.products.filter((p) => !p.archived).map((p) => ({
           id: p.id,
           label: p.article + " · " + p.name,
         })),
@@ -300,7 +325,12 @@
         "Выберите товар",
       ),
     clientOpts = () => opts(db.customers, clientId, "Выберите клиента"),
-    supplierOpts = () => opts(db.suppliers, "", "Выберите поставщика");
+    supplierOpts = () =>
+      opts(
+        db.suppliers.filter((supplier) => !supplier.archived),
+        "",
+        "Выберите поставщика",
+      );
   const head = (ey, title, desc, act = "") =>
     `<div class="page-head"><div><div class="eyebrow">${ey}</div><h1>${title}</h1><p>${desc}</p></div><div class="head-actions">${act}</div></div>`;
   const stat = (label, val, foot, icon) =>
@@ -344,8 +374,28 @@
   }
   function tableProducts(items) {
     return items.length
-      ? `<table><thead><tr><th>Товар</th><th>Категория / бренд</th><th>Закупка</th><th>Цена продажи</th><th>Остаток</th></tr></thead><tbody>${items.map((p) => `<tr><td><div class="product-cell">${p.image ? `<img class="product-thumb" src="${p.image}" alt="">` : '<div class="product-placeholder">▦</div>'}<div><b>${esc(p.name)}</b><span class="subline">Артикул ${esc(p.article)}</span></div></div></td><td>${esc(p.category || "Без категории")}<span class="subline">${esc(p.brand || "Без бренда")}</span></td><td>${cash(p.cost, p.currency)}<span class="subline">Наценка ${n(p.markup)}%</span></td><td><b>${cash(price(p))}</b><span class="subline">${cash(price(p) / n(p.fx || db.fx), "USD")}</span></td><td><span class="badge ${stock(p.id) <= 5 ? "warn" : ""}">${stock(p.id)} шт.</span></td></tr>`).join("")}</tbody></table>`
+      ? `<table><thead><tr><th>Товар</th><th>Категория / бренд</th><th>Закупка</th><th>Цена продажи</th><th>Остаток</th><th>Действия</th></tr></thead><tbody>${items
+          .map(
+            (p) =>
+              `<tr class="${p.archived ? "archived-row" : ""}"><td><div class="product-cell">${p.image ? `<img class="product-thumb" src="${p.image}" alt="">` : '<div class="product-placeholder">▦</div>'}<div><b>${esc(p.name)}</b>${p.archived ? '<span class="badge muted-badge">В архиве</span>' : ""}<span class="subline">Артикул ${esc(p.article)}</span></div></div></td><td>${esc(p.category || "Без категории")}<span class="subline">${esc(p.brand || "Без бренда")}</span></td><td>${cash(p.cost, p.currency)}<span class="subline">Наценка ${n(p.markup)}%</span></td><td><b>${cash(price(p))}</b><span class="subline">${cash(price(p) / n(p.fx || db.fx), "USD")}</span></td><td><span class="badge ${stock(p.id) <= 5 ? "warn" : ""}">${stock(p.id)} шт.</span></td><td><div class="table-actions">${p.archived ? `<button class="btn small" data-act="restore-product" data-id="${p.id}">Вернуть</button>` : `<button class="btn small" data-act="edit-product" data-id="${p.id}">Изменить</button><button class="btn small danger" data-act="delete-product" data-id="${p.id}">Удалить</button>`}</div></td></tr>`,
+          )
+          .join("")}</tbody></table>`
       : empty("Добавьте товар в каталог или измените поиск.", "▦");
+  }
+  function productEditForm(p) {
+    const categoryOptions = db.categories
+      .map(
+        (category) =>
+          `<option value="${esc(category)}" ${p.category === category ? "selected" : ""}>${esc(category)}</option>`,
+      )
+      .join("");
+    const brandOptions = db.brands
+      .map(
+        (brand) =>
+          `<option value="${esc(brand)}" ${p.brand === brand ? "selected" : ""}>${esc(brand)}</option>`,
+      )
+      .join("");
+    return `<h2>Изменить товар</h2><p>Обновите карточку товара. Уже сохранённые накладные и поставки останутся в истории.</p><form id="edit-product" data-id="${p.id}"><div class="form-grid three"><div class="field"><label>Название</label><input class="input" name="name" value="${esc(p.name)}" required></div><div class="field"><label>Артикул</label><input class="input" name="article" value="${esc(p.article)}" required></div><div class="field"><label>Категория</label><select name="category"><option value="" ${p.category ? "" : "selected"}>Без категории</option>${categoryOptions}${p.category && !db.categories.includes(p.category) ? `<option value="${esc(p.category)}" selected>${esc(p.category)}</option>` : ""}</select></div><div class="field"><label>Закупочная цена</label><input class="input" name="cost" type="number" min="0" step=".01" value="${n(p.cost)}" required></div><div class="field"><label>Валюта</label><select name="currency"><option value="USD" ${p.currency === "USD" ? "selected" : ""}>USD</option><option value="UAH" ${p.currency === "UAH" ? "selected" : ""}>UAH</option></select></div><div class="field"><label>Курс доллара</label><input class="input" name="fx" type="number" min=".01" step=".01" value="${n(p.fx) || n(db.fx)}"></div><div class="field"><label>Наценка, %</label><input class="input" name="markup" type="number" step="1" value="${n(p.markup)}"></div><div class="field"><label>Бренд</label><select name="brand"><option value="">Без бренда</option>${brandOptions}${p.brand && !db.brands.includes(p.brand) ? `<option value="${esc(p.brand)}" selected>${esc(p.brand)}</option>` : ""}</select></div><div class="field span3"><label>Заменить фото (необязательно)</label><input class="input" name="image" type="file" accept="image/*"><small>Если новое фото не выбирать, останется текущее.</small><img id="edit-image-preview" class="upload-preview" src="${p.image || ""}" ${p.image ? "" : "hidden"} alt="Предпросмотр товара"></div></div><div class="form-actions"><button type="button" class="btn" data-act="close">Отмена</button><button class="btn primary">Сохранить изменения</button></div></form>`;
   }
   function director() {
     const receivable = db.customers.reduce((s, c) => s + debt(c.id), 0),
@@ -357,10 +407,10 @@
         "Товары, закупочные цены и поступления на склад.",
         `<button class="btn" data-act="fx">Курс $ ${n(db.fx).toFixed(2)}</button>`,
       ) +
-      `<div class="grid stats">${stat("Позиций каталога", db.products.length, "Артикулы и цены", "▦")}${stat("Единиц на складе", totalStock(), "По всем категориям", "▤")}${stat("Долг клиентов", cash(receivable), "Открытые балансы", "↗")}${stat("Долг поставщикам", cash(payables), "Открытые расчёты", "☏")}</div>
+      `<div class="grid stats">${stat("Позиций каталога", db.products.filter((p) => !p.archived).length, "Артикулы и цены", "▦")}${stat("Единиц на складе", totalStock(), "По всем категориям", "▤")}${stat("Долг клиентов", cash(receivable), "Открытые балансы", "↗")}${stat("Долг поставщикам", cash(payables), "Открытые расчёты", "☏")}</div>
 <details class="details"><summary>＋ Добавить товар в каталог</summary><div class="details-body"><form id="product-form"><div class="form-grid three"><div class="field"><label>Название</label><input class="input" name="name" required></div><div class="field"><label>Артикул</label><input class="input" name="article" required></div><div class="field"><label>Категория</label><select name="category">${db.categories.map((x) => `<option>${esc(x)}</option>`).join("")}<option value="">Без категории</option></select></div><div class="field"><label>Закупочная цена</label><input class="input" name="cost" type="number" min="0" step=".01" required></div><div class="field"><label>Валюта</label><select name="currency"><option value="USD">USD</option><option value="UAH">UAH</option></select></div><div class="field"><label>Курс доллара</label><input class="input" name="fx" type="number" min=".01" step=".01" value="${n(db.fx)}"></div><div class="field"><label>Наценка, %</label><input class="input" name="markup" type="number" step="1" value="${n(db.markup)}"></div><div class="field"><label>Округлять до, ₴</label><input class="input" name="round" type="number" min="1" value="${n(db.round)}"></div><div class="field"><label>Бренд</label><div class="row-between"><select name="brand"><option value="">Без бренда</option>${db.brands.map((x) => `<option>${esc(x)}</option>`).join("")}</select><button class="btn small" type="button" data-act="brand">＋</button></div></div><div class="field span3"><label>Фото товара (необязательно)</label><input class="input" name="image" type="file" accept="image/*"><small>Изображение уменьшится для хранения в браузере.</small><img id="image-preview" class="upload-preview" hidden alt="Предпросмотр товара"></div><div class="notice span3" id="price-hint">Введите закупочную стоимость для расчёта цены продажи.</div></div><div class="form-actions"><button class="btn primary">Добавить товар</button></div></form></div></details>
-<details class="details"><summary>＋ Оформить поступление</summary><div class="details-body"><form id="receipt-form"><div class="form-grid three"><div class="field"><label>Товар</label><select name="productId" required>${productOpts()}</select></div><div class="field"><label>Количество, шт.</label><input class="input" name="qty" type="number" min="1" step="1" required></div><div class="field"><label>От кого поступил</label><select name="supplierId" required>${supplierOpts()}</select></div><div class="field"><label>Дата и время</label><input class="input" name="date" type="datetime-local" value="${now()}" required></div><div class="notice span2">Приход увеличит остаток, запишет расход в бухгалтерию и начислит долг поставщику.</div></div><div class="form-actions"><button class="btn primary">Зафиксировать поступление</button></div></form>${db.suppliers.length ? "" : '<p class="small-text">Сначала добавьте контакт в кабинете «Поставщики».</p>'}</div></details>
-<div class="card panel"><div class="panel-head"><div><h2>Каталог товаров</h2><p>Поиск по названию и артикулу</p></div><button class="btn small" data-act="category">＋ Категория</button></div><div class="toolbar"><div class="search"><input class="input" id="prod-search" placeholder="Найти товар или артикул"></div><select id="cat-filter" style="max-width:230px"><option value="">Все категории</option>${db.categories.map((c) => `<option>${esc(c)}</option>`).join("")}</select></div><div id="prod-table" class="table-wrap top-gap">${tableProducts(db.products)}</div><div class="divider"></div><div class="panel-head"><div><h2>Категории</h2><p>Можно добавлять свои категории</p></div></div><div class="category-row">${db.categories.map((c) => `<span class="pill">${esc(c)}</span>`).join("")}</div></div>`;
+<details class="details"><summary>＋ Оформить поступление</summary><div class="details-body"><form id="receipt-form"><div class="form-grid three"><div class="field"><label>Товар</label><select name="productId" required>${productOpts()}</select></div><div class="field"><label>Количество, шт.</label><input class="input" name="qty" type="number" min="1" step="1" required></div><div class="field"><label>От кого поступил</label><select name="supplierId" required>${supplierOpts()}</select></div><div class="field"><label>Дата и время</label><input class="input" name="date" type="datetime-local" value="${now()}" required></div><div class="field"><label>Скидка поставщика, %</label><input class="input" name="discountPercent" type="number" min="0" max="100" step="0.1" value="0"></div><div class="notice span3" id="receipt-total">Укажите товар и количество, чтобы увидеть сумму к учёту.</div><div class="notice span3">Поступление увеличит остаток, а сумма с учётом скидки попадёт в расходы и баланс поставщика.</div></div><div class="form-actions"><button class="btn primary">Зафиксировать поступление</button></div></form>${db.suppliers.some((supplier) => !supplier.archived) ? "" : '<p class="small-text">Добавьте или восстановите поставщика в кабинете «Поставщики».</p>'}</div></details>
+<div class="card panel"><div class="panel-head"><div><h2>Каталог товаров</h2><p>Поиск по названию и артикулу</p></div><button class="btn small" data-act="category">＋ Категория</button></div><div class="toolbar"><div class="search"><input class="input" id="prod-search" placeholder="Найти товар или артикул"></div><label class="archive-toggle"><input type="checkbox" id="show-archived-products"> Показать архив</label><select id="cat-filter" style="max-width:230px"><option value="">Все категории</option>${db.categories.map((c) => `<option>${esc(c)}</option>`).join("")}</select></div><div id="prod-table" class="table-wrap top-gap">${tableProducts(db.products.filter((p) => showArchivedProducts ? p.archived : !p.archived))}</div><div class="divider"></div><div class="panel-head"><div><h2>Категории</h2><p>Можно добавлять свои категории</p></div></div><div class="category-row">${db.categories.map((c) => `<span class="pill">${esc(c)}</span>`).join("")}</div></div>`;
     const pf = $("#product-form");
     pf.addEventListener("input", priceHint);
     pf.addEventListener("change", priceHint);
@@ -413,6 +463,7 @@
         priceUAH: retail,
         image,
       });
+      showArchivedProducts = false;
       save();
       toast("Товар добавлен · " + cash(retail));
       director();
@@ -422,24 +473,37 @@
       const f = new FormData(e.currentTarget),
         p = find(db.products, f.get("productId")),
         s = find(db.suppliers, f.get("supplierId")),
-        qty = n(f.get("qty"));
+        qty = n(f.get("qty")),
+        discountPercent = n(f.get("discountPercent"));
       if (!p || !s || qty <= 0) return toast("Выберите товар и поставщика");
+      if (discountPercent < 0 || discountPercent > 100)
+        return toast("Скидка должна быть от 0 до 100%");
       const date = new Date(f.get("date")).toISOString(),
         receiptId = id(),
         unit = p.currency === "USD" ? p.cost * p.fx : p.cost,
-        amount = unit * qty;
+        grossAmount = unit * qty,
+        discountAmount = Math.round(grossAmount * discountPercent) / 100,
+        amount = Math.max(0, Math.round((grossAmount - discountAmount) * 100) / 100),
+        discountNote = discountPercent
+          ? ` · скидка ${discountPercent}% (−${cash(discountAmount)})`
+          : "",
+        receiptNote = `Поставка ${p.name} · ${qty} шт.${discountNote}`;
       db.receipts.unshift({
         id: receiptId,
         productId: p.id,
         qty,
         supplierId: s.id,
         date,
+        grossAmount,
+        discountPercent,
+        discountAmount,
+        amount,
       });
       db.supplierLedger.unshift({
         id: id(),
         supplierId: s.id,
         amount,
-        note: `Поставка ${p.name} · ${qty} шт.`,
+        note: receiptNote,
         date,
         type: "charge",
         source: "receipt",
@@ -450,18 +514,45 @@
         type: "expense",
         amount,
         category: "Закупка товара",
-        description: `Поставка ${p.name} · ${qty} шт.`,
+        description: receiptNote,
         date,
         source: "receipt",
         refId: receiptId,
       });
       save();
-      toast("Поступление оформлено · расход записан в бухгалтерию");
+      toast("Поступление оформлено · скидка учтена в расходах и долге");
       director();
     };
     $("#prod-search").oninput = filterProducts;
     $("#cat-filter").onchange = filterProducts;
+    $("#show-archived-products").checked = showArchivedProducts;
+    $("#show-archived-products").onchange = (e) => {
+      showArchivedProducts = e.target.checked;
+      filterProducts();
+    };
+    $("#receipt-form").addEventListener("input", receiptPreview);
+    $("#receipt-form").addEventListener("change", receiptPreview);
     priceHint();
+    receiptPreview();
+  }
+  function receiptPreview() {
+    const form = $("#receipt-form");
+    if (!form) return;
+    const f = new FormData(form),
+      p = find(db.products, f.get("productId")),
+      qty = n(f.get("qty")),
+      discount = Math.min(100, Math.max(0, n(f.get("discountPercent"))));
+    if (!p || qty <= 0) {
+      $("#receipt-total").textContent =
+        "Укажите товар и количество, чтобы увидеть сумму к учёту.";
+      return;
+    }
+    const gross =
+        (p.currency === "USD" ? p.cost * p.fx : p.cost) * qty,
+      discountAmount = Math.round(gross * discount) / 100,
+      net = Math.max(0, Math.round((gross - discountAmount) * 100) / 100);
+    $("#receipt-total").innerHTML =
+      `Закупка: <b>${cash(gross)}</b> · скидка ${discount}%: <b>− ${cash(discountAmount)}</b> · к учёту: <b>${cash(net)}</b>`;
   }
   function priceHint() {
     const f = new FormData($("#product-form"));
@@ -483,9 +574,12 @@
   }
   function filterProducts() {
     const q = $("#prod-search").value.toLowerCase(),
-      c = $("#cat-filter").value;
+      c = $("#cat-filter").value,
+      products = db.products.filter((p) =>
+        showArchivedProducts ? p.archived : !p.archived,
+      );
     $("#prod-table").innerHTML = tableProducts(
-      db.products.filter(
+      products.filter(
         (p) =>
           (!c || p.category === c) &&
           (!q ||
@@ -522,13 +616,13 @@
         "Остатки склада",
         "Поступления сохраняют дату и поставщика. Накладные автоматически списывают товары.",
       ) +
-      `<div class="grid stats">${stat("Всего единиц", totalStock(), "Суммарный остаток", "▤")}${stat("Разных товаров", db.products.length, "Позиций каталога", "▦")}${stat("Низкий остаток", db.products.filter((p) => stock(p.id) <= 5).length, "Пять штук или меньше", "!")}${stat("Отрицательный остаток", db.products.filter((p) => stock(p.id) < 0).length, "Возможны предзаказы", "↘")}</div><details class="details"><summary>＋ Ручная корректировка склада</summary><div class="details-body"><form id="adjust-form"><div class="form-grid three"><div class="field"><label>Товар</label><select name="productId" required>${productOpts()}</select></div><div class="field"><label>Изменение, шт. (например −2)</label><input class="input" name="delta" type="number" required></div><div class="field"><label>Комментарий</label><input class="input" name="description" required></div></div><div class="form-actions"><button class="btn primary">Сохранить изменение</button></div></form></div></details><div class="card panel"><div class="panel-head"><div><h2>Текущие остатки</h2><p>Накладные и поступления учитываются автоматически</p></div><div class="search" style="max-width:300px"><input class="input" id="stock-search" placeholder="Поиск товара"></div></div><div class="table-wrap" id="stock-table">${stockTable(db.products)}</div></div><div class="card panel top-gap"><div class="panel-head"><div><h2>Движение товара</h2><p>История поступлений и списаний</p></div></div>${
+      `<div class="grid stats">${stat("Всего единиц", totalStock(), "Суммарный остаток", "▤")}${stat("Разных товаров", db.products.filter((p) => !p.archived).length, "Позиций каталога", "▦")}${stat("Низкий остаток", db.products.filter((p) => !p.archived && stock(p.id) <= 5).length, "Пять штук или меньше", "!")}${stat("Отрицательный остаток", db.products.filter((p) => !p.archived && stock(p.id) < 0).length, "Возможны предзаказы", "↘")}</div><details class="details"><summary>＋ Ручная корректировка склада</summary><div class="details-body"><form id="adjust-form"><div class="form-grid three"><div class="field"><label>Товар</label><select name="productId" required>${productOpts()}</select></div><div class="field"><label>Изменение, шт. (например −2)</label><input class="input" name="delta" type="number" required></div><div class="field"><label>Комментарий</label><input class="input" name="description" required></div></div><div class="form-actions"><button class="btn primary">Сохранить изменение</button></div></form></div></details><div class="card panel"><div class="panel-head"><div><h2>Текущие остатки</h2><p>Накладные и поступления учитываются автоматически</p></div><div class="search" style="max-width:300px"><input class="input" id="stock-search" placeholder="Поиск товара"></div></div><div class="table-wrap" id="stock-table">${stockTable(db.products.filter((p) => !p.archived))}</div></div><div class="card panel top-gap"><div class="panel-head"><div><h2>Движение товара</h2><p>История поступлений и списаний</p></div></div>${
         moves.length
           ? `<div class="table-wrap"><table><thead><tr><th>Дата и время</th><th>Товар</th><th>Движение</th><th>От кого / документ</th></tr></thead><tbody>${moves
               .slice(0, 60)
               .map(
                 (m) =>
-                  `<tr><td>${dt(m.date)}</td><td>${esc(find(db.products, m.productId)?.name || "Товар")}</td><td><span class="badge ${m.delta < 0 ? "red" : ""}">${m.delta > 0 ? "+" : ""}${m.delta} шт.</span></td><td>${esc(find(db.suppliers, m.supplierId)?.name || m.kind)}</td></tr>`,
+                  `<tr><td>${dt(m.date)}</td><td>${esc(find(db.products, m.productId)?.name || "Товар")}</td><td><span class="badge ${m.delta < 0 ? "red" : ""}">${m.delta > 0 ? "+" : ""}${m.delta} шт.</span></td><td>${esc(find(db.suppliers, m.supplierId)?.name || m.kind)}${m.discountPercent > 0 ? `<span class="subline">Скидка ${n(m.discountPercent)}% · −${cash(m.discountAmount)}</span>` : ""}</td></tr>`,
               )
               .join("")}</tbody></table></div>`
           : empty("Поступлений и списаний пока нет.", "↕")
@@ -553,6 +647,7 @@
     $("#stock-search").oninput = (e) =>
       ($("#stock-table").innerHTML = stockTable(
         db.products.filter((p) =>
+          !p.archived &&
           (p.name + " " + p.article)
             .toLowerCase()
             .includes(e.target.value.toLowerCase()),
@@ -561,7 +656,7 @@
   }
   function stockTable(items) {
     return items.length
-      ? `<table><thead><tr><th>Товар</th><th>Категория</th><th>Бренд</th><th>Остаток</th><th>Цена продажи</th><th>Стоимость остатка*</th></tr></thead><tbody>${items.map((p) => `<tr><td><b>${esc(p.name)}</b><span class="subline">${esc(p.article)}</span></td><td>${esc(p.category || "—")}</td><td>${esc(p.brand || "—")}</td><td><span class="badge ${stock(p.id) < 0 ? "red" : stock(p.id) <= 5 ? "warn" : ""}">${stock(p.id)} шт.</span></td><td>${cash(price(p))}</td><td>${cash(stock(p.id) * (p.currency === "USD" ? p.cost * p.fx : p.cost))}</td></tr>`).join("")}</tbody></table><p class="small-text">* По закупочной стоимости.</p>`
+      ? `<table><thead><tr><th>Товар</th><th>Категория</th><th>Бренд</th><th>Остаток</th><th>Цена продажи</th><th>Стоимость остатка*</th></tr></thead><tbody>${items.map((p) => `<tr><td><b>${esc(p.name)}</b><span class="subline">${esc(p.article)}</span></td><td>${esc(p.category || "—")}</td><td>${esc(p.brand || "—")}</td><td><span class="badge ${stock(p.id) < 0 ? "red" : stock(p.id) <= 5 ? "warn" : ""}">${stock(p.id)} шт.</span></td><td>${cash(price(p))}</td><td>${cash(stock(p.id) * purchaseUnitCost(p))}</td></tr>`).join("")}</tbody></table><p class="small-text">* По закупочной стоимости с учётом скидок поставщиков.</p>`
       : empty("В каталоге пока нет товаров.", "▤");
   }
   function customerRows(items) {
@@ -663,7 +758,7 @@
     return draft
       .map((l, i) => {
         const p = find(db.products, l.productId);
-        return `<div class="line-item"><div class="line-desc">${p ? `<b>${esc(p.name)}</b><small>${esc(p.article)} · ${cash(price(p))} / шт.</small>` : '<span class="muted">Товар не выбран</span>'}</div><input class="input qty" data-i="${i}" type="number" min="1" value="${Math.max(1, n(l.qty))}" aria-label="Количество"><b>${p ? cash(price(p) * n(l.qty)) : "—"}</b><button class="btn small danger" type="button" data-act="remove-line" data-i="${i}">×</button></div>`;
+        return `<div class="line-item"><div class="line-desc">${p ? `<b>${esc(p.name)}</b><small>${esc(p.article)} · ${cash(price(p))} / шт.</small>` : '<span class="muted">Товар не выбран</span>'}</div><label class="line-field"><span>Кол-во</span><input class="input qty" data-i="${i}" type="number" min="1" value="${Math.max(1, n(l.qty))}" aria-label="Количество"></label><label class="line-field"><span>Скидка %</span><input class="input line-discount" data-i="${i}" type="number" min="0" max="100" step="0.1" value="${clampDiscount(l.discountPercent)}" aria-label="Скидка на этот товар, процентов"></label><b class="line-total">${p ? cash(invoiceLineAmount(price(p), l.qty, l.discountPercent)) : "—"}</b><button class="btn small danger" type="button" data-act="remove-line" data-i="${i}">×</button></div>`;
       })
       .join("");
   }
@@ -673,7 +768,15 @@
       c = find(db.customers, inv.customerId);
       number = inv.number;
       date = inv.date;
-      lines = inv.lines.map((l) => ({ p: l, qty: l.qty, unit: l.unitPrice }));
+      lines = inv.lines.map((l) => ({
+        p: l,
+        qty: l.qty,
+        unit: l.unitPrice,
+        discount: clampDiscount(l.discountPercent),
+        total:
+          l.lineTotal ??
+          invoiceLineAmount(l.unitPrice, l.qty, l.discountPercent),
+      }));
       total = inv.total;
       paid = inv.paid;
     } else {
@@ -683,21 +786,32 @@
         `НК-${String(db.invoices.length + 1).padStart(4, "0")}`;
       date = $("#inv-date")?.value || now();
       lines = draft
-        .map((l) => ({ p: find(db.products, l.productId), qty: n(l.qty) }))
+        .map((l) => {
+          const p = find(db.products, l.productId),
+            qty = n(l.qty),
+            discount = clampDiscount(l.discountPercent);
+          return {
+            p,
+            qty,
+            unit: p ? price(p) : 0,
+            discount,
+            total: p ? invoiceLineAmount(price(p), qty, discount) : 0,
+          };
+        })
         .filter((x) => x.p && x.qty > 0);
-      total = lines.reduce((s, x) => s + price(x.p) * x.qty, 0);
+      total = lines.reduce((s, x) => s + x.total, 0);
       paid = Math.min(total, n($("#inv-paid")?.value));
     }
-    return `<div class="invoice-brand"><div><h2>ТЕКСТИЛЬ</h2><p>Домашний текстиль · товарная накладная</p></div><div class="invoice-number"><strong>${esc(number)}</strong>${dt(date ? new Date(date).toISOString() : new Date())}</div></div><div class="invoice-meta"><div><b>Покупатель</b>${esc(c?.name || inv?.customerName || "Клиент не выбран")}<br>${esc(c?.phone || inv?.phone || "")}<br>${esc(c?.address || inv?.address || "")}</div><div><b>Поставщик</b>Домашний текстиль<br>Товарный склад</div></div><table><thead><tr><th>№</th><th>Наименование</th><th>Артикул</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead><tbody>${
+    return `<div class="invoice-brand"><div><h2>ТЕКСТИЛЬ</h2><p>Домашний текстиль · товарная накладная</p></div><div class="invoice-number"><strong>${esc(number)}</strong>${dt(date ? new Date(date).toISOString() : new Date())}</div></div><div class="invoice-meta"><div><b>Покупатель</b>${esc(c?.name || inv?.customerName || "Клиент не выбран")}<br>${esc(c?.phone || inv?.phone || "")}<br>${esc(c?.address || inv?.address || "")}</div><div><b>Поставщик</b>Домашний текстиль<br>Товарный склад</div></div><table><thead><tr><th>№</th><th>Наименование</th><th>Артикул</th><th>Кол-во</th><th>Цена</th><th>Скидка</th><th>Сумма</th></tr></thead><tbody>${
       lines.length
         ? lines
             .map((x, i) => {
               const p = x.p,
                 unit = x.unit ?? price(p);
-              return `<tr><td>${i + 1}</td><td>${esc(p.name)}</td><td>${esc(p.article)}</td><td>${x.qty}</td><td>${cash(unit)}</td><td>${cash(unit * x.qty)}</td></tr>`;
+              return `<tr><td>${i + 1}</td><td>${esc(p.name)}</td><td>${esc(p.article)}</td><td>${x.qty}</td><td>${cash(unit)}</td><td>${x.discount || 0}%</td><td>${cash(x.total ?? invoiceLineAmount(unit, x.qty, x.discount))}</td></tr>`;
             })
             .join("")
-        : `<tr><td colspan="6" style="text-align:center;color:#899493;padding:28px">Добавьте товары, чтобы сформировать накладную</td></tr>`
+        : `<tr><td colspan="7" style="text-align:center;color:#899493;padding:28px">Добавьте товары, чтобы сформировать накладную</td></tr>`
     }</tbody></table><div class="invoice-total"><div class="total-line"><span>Количество</span><span>${lines.reduce((s, x) => s + x.qty, 0)} шт.</span></div><div class="total-line"><span>Сумма</span><span>${cash(total)}</span></div><div class="total-line"><span>Оплачено</span><span>${cash(paid)}</span></div><div class="total-line grand"><span>К оплате</span><span>${cash(total - paid)}</span></div></div><div class="invoice-foot">Товар получил(а): ____________________　Подпись: ____________________</div>`;
   }
   function updateInvoice() {
@@ -718,7 +832,7 @@
       : empty("Сохранённых накладных пока нет.", "▧");
   }
   function invoices() {
-    if (!draft.length) draft = [{ productId: "", qty: 1 }];
+    if (!draft.length) draft = [{ productId: "", qty: 1, discountPercent: 0 }];
     view.innerHTML =
       head(
         "Продажи",
@@ -727,10 +841,10 @@
       ) +
       `<div class="split"><div class="card panel no-print"><div class="panel-head"><div><h2>Данные накладной</h2><p>Сохранение спишет товар со склада</p></div></div><form id="inv-form"><div class="form-grid"><div class="field span2"><label>Найти клиента</label><input class="input" id="inv-client-search" placeholder="Введите имя или фамилию"></div><div class="field span2"><label>Клиент</label><select id="inv-client" name="customerId" required>${clientOpts()}</select></div><div class="field"><label>Дата и время</label><input class="input" id="inv-date" name="date" type="datetime-local" value="${now()}"></div><div class="field"><label>Номер</label><input class="input" id="inv-number" name="number" value="НК-${String(db.invoices.length + 1).padStart(4, "0")}"></div><div class="field span2"><label>Поиск товара по названию или артикулу</label><input class="input" id="inv-search" placeholder="Начните вводить товар"></div></div><div class="divider"></div><div class="row-between"><b style="font-size:12px">Товары в накладной</b><span class="small-text">Можно оформить предзаказ в минус</span></div><div id="invoice-lines" class="top-gap">${invoiceLineHtml()}</div><div class="line-add top-gap"><div class="field"><label>Добавить товар</label><select id="line-product">${productOpts()}</select></div><div class="field"><label>Количество</label><input class="input" id="line-qty" type="number" min="1" value="1"></div><button type="button" class="btn soft" data-act="add-line">＋ Строка</button></div><div class="divider"></div><div class="field"><label>Уже оплачено, ₴</label><input class="input" id="inv-paid" name="paid" type="number" min="0" step=".01" value="0"></div><div class="notice top-gap">Остаток суммы автоматически попадёт в баланс клиента.</div><div class="form-actions"><button class="btn primary">Сохранить накладную</button></div></form></div><div class="sticky"><div class="row-between no-print" style="margin-bottom:9px"><span class="small-text">Электронная накладная · предпросмотр</span><button class="btn small" data-act="print-current">Печать</button></div><div id="printable" class="invoice-paper">${preview()}</div></div></div><div class="card panel top-gap no-print"><div class="panel-head"><div><h2>Сохранённые накладные</h2><p>Последние документы</p></div></div>${invoiceHistory()}</div>`;
     $("#inv-form").addEventListener("input", (e) => {
-      if (!e.target.classList.contains("qty")) updateInvoice();
+      if (!e.target.matches(".qty, .line-discount")) updateInvoice();
     });
     $("#inv-form").addEventListener("change", (e) => {
-      if (!e.target.classList.contains("qty")) updateInvoice();
+      if (!e.target.matches(".qty, .line-discount")) updateInvoice();
     });
     $("#inv-form").onsubmit = (e) => {
       e.preventDefault();
@@ -746,13 +860,19 @@
                   article: p.article,
                   qty: n(l.qty),
                   unitPrice: price(p),
+                  discountPercent: clampDiscount(l.discountPercent),
+                  lineTotal: invoiceLineAmount(
+                    price(p),
+                    l.qty,
+                    l.discountPercent,
+                  ),
                 }
               : null;
           })
           .filter(Boolean);
       if (!c) return toast("Выберите клиента");
       if (!lines.length) return toast("Добавьте хотя бы один товар");
-      const total = lines.reduce((s, l) => s + l.qty * l.unitPrice, 0),
+      const total = lines.reduce((s, l) => s + l.lineTotal, 0),
         paid = Math.min(total, Math.max(0, n(f.get("paid")))),
         date = new Date(f.get("date") || now()).toISOString();
       const invoiceId = id(),
@@ -780,13 +900,13 @@
         refId: invoiceId,
       });
       save();
-      draft = [{ productId: "", qty: 1 }];
+      draft = [{ productId: "", qty: 1, discountPercent: 0 }];
       toast("Накладная сохранена, склад обновлён");
       invoices();
     };
     $("#inv-search").oninput = (e) => {
       const q = e.target.value.toLowerCase(),
-        p = db.products.find((x) =>
+        p = db.products.find((x) => !x.archived &&
           (x.name + " " + x.article).toLowerCase().includes(q),
         );
       if (p) $("#line-product").value = p.id;
@@ -902,22 +1022,30 @@
     const rows = db.supplierLedger
       .filter((x) => x.supplierId === s.id)
       .sort((a, b) => new Date(b.date) - new Date(a.date));
-    return `<div class="profile-head"><div><h2>${esc(s.name)}</h2><p>${esc(s.brand || "Бренд не указан")} · ${esc(s.phone || "Телефон не указан")}</p><p>${esc(s.note || "Заметок пока нет")}</p><button class="btn small top-gap" data-act="edit-supplier" data-id="${s.id}">Изменить контакты / заметку</button></div><div class="balance-card"><span>Остаток долга поставщику</span><strong>${cash(payable(s.id))}</strong></div></div><div class="notice">Поступления и дополнительные закупки автоматически учитываются как расходы. Оплата поставщику только уменьшает долг и не дублирует расход.</div><form id="supplier-entry" class="top-gap"><div class="form-grid three"><div class="field"><label>Операция</label><select name="type"><option value="charge">Добавить долг</option><option value="payment">Записать оплату</option></select></div><div class="field"><label>Сумма, ₴</label><input class="input" name="amount" type="number" min=".01" step=".01" required></div><div class="field"><label>Комментарий</label><input class="input" name="note" placeholder="Закупка, перевод…"></div></div><div class="form-actions"><button class="btn primary">Добавить запись</button></div></form><div class="divider"></div><h2 style="font-size:14px">История расчётов</h2>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Запись</th><th>Сумма</th></tr></thead><tbody>${rows.map((x) => `<tr><td>${dt(x.date)}</td><td>${esc(x.note || "Расчёт")}</td><td class="${x.amount < 0 ? "amount-positive" : ""}">${x.amount < 0 ? "−" : "+"} ${cash(Math.abs(x.amount))}</td></tr>`).join("")}</tbody></table></div>` : empty("Операций пока нет.", "↔")}`;
+    return `<div class="profile-head"><div><h2>${esc(s.name)}${s.archived ? ' <span class="badge muted-badge">В архиве</span>' : ""}</h2><p>${esc(s.brand || "Бренд не указан")} · ${esc(s.phone || "Телефон не указан")}</p><p>${esc(s.note || "Заметок пока нет")}</p><div class="table-actions top-gap"><button class="btn small" data-act="edit-supplier" data-id="${s.id}">Изменить контакты / заметку</button>${s.archived ? `<button class="btn small primary" data-act="restore-supplier" data-id="${s.id}">Восстановить</button>` : `<button class="btn small danger" data-act="delete-supplier" data-id="${s.id}">Удалить</button>`}</div></div><div class="balance-card"><span>Остаток долга поставщику</span><strong>${cash(payable(s.id))}</strong></div></div>${s.archived ? '<div class="notice bottom-gap">Карточка в архиве: новые поставки недоступны. Здесь можно посмотреть историю и записать оплату остатка долга.</div>' : '<div class="notice">Поступления и дополнительные закупки автоматически учитываются как расходы. Оплата поставщику только уменьшает долг и не дублирует расход.</div>'}<form id="supplier-entry" class="top-gap"><div class="form-grid three"><div class="field"><label>Операция</label><select name="type">${s.archived ? '<option value="payment">Записать оплату</option>' : '<option value="charge">Добавить долг</option><option value="payment">Записать оплату</option>'}</select></div><div class="field"><label>Сумма, ₴</label><input class="input" name="amount" type="number" min=".01" step=".01" required></div><div class="field"><label>Комментарий</label><input class="input" name="note" placeholder="Закупка, перевод…"></div></div><div class="form-actions"><button class="btn primary">Добавить запись</button></div></form><div class="divider"></div><h2 style="font-size:14px">История расчётов</h2>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Запись</th><th>Сумма</th></tr></thead><tbody>${rows.map((x) => `<tr><td>${dt(x.date)}</td><td>${esc(x.note || "Расчёт")}</td><td class="${x.amount < 0 ? "amount-positive" : ""}">${x.amount < 0 ? "−" : "+"} ${cash(Math.abs(x.amount))}</td></tr>`).join("")}</tbody></table></div>` : empty("Операций пока нет.", "↔")}`;
   }
   function suppliers() {
     if (supplierId && !find(db.suppliers, supplierId)) supplierId = "";
-    const s = find(db.suppliers, supplierId);
+    const s = find(db.suppliers, supplierId),
+      visibleSuppliers = db.suppliers.filter((supplier) =>
+        showArchivedSuppliers ? supplier.archived : !supplier.archived,
+      );
     view.innerHTML =
       head(
         "Контакты и расчёты",
         "Поставщики",
         "Заметки, бренды и баланс долга по каждому контакту.",
       ) +
-      `<div class="supplier-layout"><div class="stack"><details class="details"><summary>＋ Добавить поставщика</summary><div class="details-body"><form id="supplier-form"><div class="form-grid"><div class="field span2"><label>Имя / компания</label><input class="input" name="name" required></div><div class="field"><label>Телефон</label><input class="input" name="phone" type="tel"></div><div class="field"><label>Бренд</label><div class="row-between"><select name="brand"><option value="">Выберите бренд</option>${db.brands.map((b) => `<option>${esc(b)}</option>`).join("")}</select><button class="btn small" type="button" data-act="brand">＋</button></div></div><div class="field span2"><label>Заметка</label><textarea name="note" placeholder="Условия, контакты, договорённости…"></textarea></div></div><div class="form-actions"><button class="btn primary">Создать карточку</button></div></form></div></details><div class="card panel"><div class="panel-head"><h2>Поставщики · ${db.suppliers.length}</h2></div><div class="record-list">${supplierRows(db.suppliers)}</div></div></div><div class="card panel" id="supplier-card">${s ? supplierCard(s) : empty("Выберите поставщика или добавьте контакт.", "☏")}</div></div><div class="card panel top-gap"><div class="panel-head"><div><h2>Бренды</h2><p>Справочник для товаров и поставщиков</p></div><button class="btn small" data-act="brand">＋ Добавить бренд</button></div><div class="category-row">${db.brands.map((x) => `<span class="pill">${esc(x)}</span>`).join("") || '<span class="small-text">Добавьте первый бренд</span>'}</div></div>`;
+      `<div class="supplier-layout"><div class="stack"><details class="details"><summary>＋ Добавить поставщика</summary><div class="details-body"><form id="supplier-form"><div class="form-grid"><div class="field span2"><label>Имя / компания</label><input class="input" name="name" required></div><div class="field"><label>Телефон</label><input class="input" name="phone" type="tel"></div><div class="field"><label>Бренд</label><div class="row-between"><select name="brand"><option value="">Выберите бренд</option>${db.brands.map((b) => `<option>${esc(b)}</option>`).join("")}</select><button class="btn small" type="button" data-act="brand">＋</button></div></div><div class="field span2"><label>Заметка</label><textarea name="note" placeholder="Условия, контакты, договорённости…"></textarea></div></div><div class="form-actions"><button class="btn primary">Создать карточку</button></div></form></div></details><div class="card panel"><div class="panel-head row-between"><h2>Поставщики · ${visibleSuppliers.length}</h2><label class="archive-toggle"><input type="checkbox" id="show-archived-suppliers" ${showArchivedSuppliers ? "checked" : ""}> Архив</label></div><div class="record-list">${supplierRows(visibleSuppliers)}</div></div></div><div class="card panel" id="supplier-card">${s ? supplierCard(s) : empty("Выберите поставщика или добавьте контакт.", "☏")}</div></div><div class="card panel top-gap"><div class="panel-head"><div><h2>Бренды</h2><p>Справочник для товаров и поставщиков</p></div><button class="btn small" data-act="brand">＋ Добавить бренд</button></div><div class="category-row">${db.brands.map((x) => `<span class="pill">${esc(x)}</span>`).join("") || '<span class="small-text">Добавьте первый бренд</span>'}</div></div>`;
+    $("#show-archived-suppliers").onchange = (event) => {
+      showArchivedSuppliers = event.target.checked;
+      supplierId = "";
+      suppliers();
+    };
   }
-  function modal(html) {
+  function modal(html, className = "") {
     $("#overlay").innerHTML =
-      `<div class="modal-backdrop"><div class="modal">${html}</div></div>`;
+      `<div class="modal-backdrop"><div class="modal ${className}">${html}</div></div>`;
   }
   document.addEventListener("click", (e) => {
     const nav = e.target.closest("[data-page]");
@@ -936,6 +1064,136 @@
         toast("Запись удалена");
         notebook();
       }
+      return;
+    }
+    if (a === "edit-product") {
+      const product = find(db.products, b.dataset.id);
+      if (!product) return;
+      modal(productEditForm(product), "modal-wide");
+      const form = $("#edit-product");
+      form.querySelector('[name="image"]').onchange = (event) => {
+        const file = event.target.files[0],
+          preview = $("#edit-image-preview");
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          preview.src = reader.result;
+          preview.hidden = false;
+        };
+        reader.readAsDataURL(file);
+      };
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        const f = new FormData(form),
+          name = String(f.get("name")).trim(),
+          article = String(f.get("article")).trim(),
+          cost = n(f.get("cost")),
+          currency = String(f.get("currency")),
+          fx = n(f.get("fx")) || n(db.fx),
+          markup = n(f.get("markup")),
+          brand = String(f.get("brand") || "").trim();
+        let image = product.image || "";
+        try {
+          const file = f.get("image");
+          if (file?.size) image = await shrinkImage(file);
+        } catch {
+          return toast("Не удалось обработать изображение");
+        }
+        if (brand && !db.brands.includes(brand)) db.brands.push(brand);
+        Object.assign(product, {
+          name,
+          article,
+          category: String(f.get("category") || ""),
+          brand,
+          cost,
+          currency,
+          fx,
+          markup,
+          priceUAH: round(
+            cost * (currency === "USD" ? fx : 1) * (1 + markup / 100),
+          ),
+          image,
+        });
+        save();
+        $("#overlay").innerHTML = "";
+        toast("Товар обновлён · " + cash(product.priceUAH));
+        director();
+      };
+      return;
+    }
+    if (a === "delete-product") {
+      const product = find(db.products, b.dataset.id);
+      if (!product) return;
+      const hasHistory =
+        db.receipts.some((x) => x.productId === product.id) ||
+        db.invoices.some((x) =>
+          x.lines.some((line) => line.productId === product.id),
+        ) ||
+        db.accounting.some((x) => x.stockProductId === product.id);
+      if (hasHistory && stock(product.id) !== 0)
+        return toast(
+          `Нельзя убрать товар: на складе ${stock(product.id)} шт. Сначала оформите движение товара.`,
+        );
+      const message = hasHistory
+        ? "У товара есть история. Переместить его в архив и сохранить накладные и поставки?"
+        : "Удалить товар из каталога?";
+      if (!confirm(message)) return;
+      if (hasHistory) {
+        product.archived = true;
+        toast("Товар перемещён в архив, история сохранена");
+      } else {
+        db.products = db.products.filter((x) => x.id !== product.id);
+        toast("Товар удалён");
+      }
+      save();
+      director();
+      return;
+    }
+    if (a === "restore-product") {
+      const product = find(db.products, b.dataset.id);
+      if (!product) return;
+      product.archived = false;
+      showArchivedProducts = false;
+      save();
+      toast("Товар возвращён в каталог");
+      director();
+      return;
+    }
+    if (a === "delete-supplier") {
+      const supplier = find(db.suppliers, b.dataset.id);
+      if (!supplier) return;
+      const hasHistory =
+        db.receipts.some((x) => x.supplierId === supplier.id) ||
+        db.supplierLedger.some((x) => x.supplierId === supplier.id);
+      if (
+        !confirm(
+          hasHistory
+            ? "У поставщика есть поставки или расчёты. Переместить карточку в архив и сохранить историю?"
+            : "Удалить карточку поставщика?",
+        )
+      )
+        return;
+      if (hasHistory) {
+        supplier.archived = true;
+        toast("Поставщик перемещён в архив, история сохранена");
+      } else {
+        db.suppliers = db.suppliers.filter((x) => x.id !== supplier.id);
+        toast("Поставщик удалён");
+      }
+      supplierId = "";
+      save();
+      suppliers();
+      return;
+    }
+    if (a === "restore-supplier") {
+      const supplier = find(db.suppliers, b.dataset.id);
+      if (!supplier) return;
+      supplier.archived = false;
+      supplierId = supplier.id;
+      showArchivedSuppliers = false;
+      save();
+      toast("Поставщик восстановлен");
+      suppliers();
       return;
     }
     if (a === "brand" || a === "category") {
@@ -980,13 +1238,14 @@
       const p = $("#line-product").value,
         q = Math.max(1, n($("#line-qty").value));
       if (!p) return toast("Сначала добавьте товары в каталог");
-      draft.push({ productId: p, qty: q });
+      draft.push({ productId: p, qty: q, discountPercent: 0 });
       updateInvoice();
       return;
     }
     if (a === "remove-line") {
       draft.splice(Number(b.dataset.i), 1);
-      if (!draft.length) draft = [{ productId: "", qty: 1 }];
+      if (!draft.length)
+        draft = [{ productId: "", qty: 1, discountPercent: 0 }];
       updateInvoice();
       return;
     }
@@ -1029,14 +1288,27 @@
     }
   });
   document.addEventListener("input", (e) => {
-    if (e.target.classList.contains("qty")) {
+    if (
+      e.target.classList.contains("qty") ||
+      e.target.classList.contains("line-discount")
+    ) {
       const i = Number(e.target.dataset.i);
-      if (draft[i]) draft[i].qty = Math.max(1, n(e.target.value));
+      if (draft[i] && e.target.classList.contains("qty"))
+        draft[i].qty = Math.max(1, n(e.target.value));
+      if (draft[i] && e.target.classList.contains("line-discount")) {
+        draft[i].discountPercent = clampDiscount(e.target.value);
+        if (e.target.value && (n(e.target.value) < 0 || n(e.target.value) > 100))
+          e.target.value = String(draft[i].discountPercent);
+      }
       const row = e.target.closest(".line-item"),
         item = find(db.products, draft[i]?.productId);
       if (row && item)
-        row.querySelector("b").textContent = cash(
-          price(item) * n(e.target.value),
+        row.querySelector(".line-total").textContent = cash(
+          invoiceLineAmount(
+            price(item),
+            draft[i]?.qty,
+            draft[i]?.discountPercent,
+          ),
         );
       const p = $("#printable");
       if (p) p.innerHTML = preview();
@@ -1075,6 +1347,7 @@
         };
       if (s.brand && !db.brands.includes(s.brand)) db.brands.push(s.brand);
       db.suppliers.unshift(s);
+      showArchivedSuppliers = false;
       supplierId = s.id;
       save();
       toast("Поставщик добавлен");
@@ -1086,6 +1359,9 @@
         amount = n(f.get("amount")),
         type = String(f.get("type"));
       if (amount <= 0) return;
+      const supplier = find(db.suppliers, supplierId);
+      if (supplier?.archived && type === "charge")
+        return toast("Восстановите поставщика, чтобы добавить новую закупку");
       const entryId = id(),
         date = new Date().toISOString(),
         note =
@@ -1156,3 +1432,7 @@
   $("#mobile-toggle").onclick = () => $("#app").classList.toggle("menu-open");
   goto("director");
 })();
+
+
+
+
