@@ -1022,7 +1022,28 @@
     const rows = db.supplierLedger
       .filter((x) => x.supplierId === s.id)
       .sort((a, b) => new Date(b.date) - new Date(a.date));
-    return `<div class="profile-head"><div><h2>${esc(s.name)}${s.archived ? ' <span class="badge muted-badge">В архиве</span>' : ""}</h2><p>${esc(s.brand || "Бренд не указан")} · ${esc(s.phone || "Телефон не указан")}</p><p>${esc(s.note || "Заметок пока нет")}</p><div class="table-actions top-gap"><button class="btn small" data-act="edit-supplier" data-id="${s.id}">Изменить контакты / заметку</button>${s.archived ? `<button class="btn small primary" data-act="restore-supplier" data-id="${s.id}">Восстановить</button>` : `<button class="btn small danger" data-act="delete-supplier" data-id="${s.id}">Удалить</button>`}</div></div><div class="balance-card"><span>Остаток долга поставщику</span><strong>${cash(payable(s.id))}</strong></div></div>${s.archived ? '<div class="notice bottom-gap">Карточка в архиве: новые поставки недоступны. Здесь можно посмотреть историю и записать оплату остатка долга.</div>' : '<div class="notice">Поступления и дополнительные закупки автоматически учитываются как расходы. Оплата поставщику только уменьшает долг и не дублирует расход.</div>'}<form id="supplier-entry" class="top-gap"><div class="form-grid three"><div class="field"><label>Операция</label><select name="type">${s.archived ? '<option value="payment">Записать оплату</option>' : '<option value="charge">Добавить долг</option><option value="payment">Записать оплату</option>'}</select></div><div class="field"><label>Сумма, ₴</label><input class="input" name="amount" type="number" min=".01" step=".01" required></div><div class="field"><label>Комментарий</label><input class="input" name="note" placeholder="Закупка, перевод…"></div></div><div class="form-actions"><button class="btn primary">Добавить запись</button></div></form><div class="divider"></div><h2 style="font-size:14px">История расчётов</h2>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Запись</th><th>Сумма</th></tr></thead><tbody>${rows.map((x) => `<tr><td>${dt(x.date)}</td><td>${esc(x.note || "Расчёт")}</td><td class="${x.amount < 0 ? "amount-positive" : ""}">${x.amount < 0 ? "−" : "+"} ${cash(Math.abs(x.amount))}</td></tr>`).join("")}</tbody></table></div>` : empty("Операций пока нет.", "↔")}`;
+    return `<div class="profile-head"><div><h2>${esc(s.name)}${s.archived ? ' <span class="badge muted-badge">В архиве</span>' : ""}</h2><p>${esc(s.brand || "Бренд не указан")} · ${esc(s.phone || "Телефон не указан")}</p><p>${esc(s.note || "Заметок пока нет")}</p><div class="table-actions top-gap"><button class="btn small" data-act="edit-supplier" data-id="${s.id}">Изменить контакты / заметку</button>${s.archived ? `<button class="btn small primary" data-act="restore-supplier" data-id="${s.id}">Восстановить</button>` : `<button class="btn small danger" data-act="delete-supplier" data-id="${s.id}">Удалить</button>`}</div></div><div class="balance-card"><span>Остаток долга поставщику</span><strong>${cash(payable(s.id))}</strong></div></div>${s.archived ? '<div class="notice bottom-gap">Карточка в архиве: новые поставки недоступны. Здесь можно посмотреть историю и записать оплату остатка долга.</div>' : '<div class="notice">Поступления и дополнительные закупки автоматически учитываются как расходы. Оплата поставщику только уменьшает долг и не дублирует расход.</div>'}<form id="supplier-entry" class="top-gap"><div class="form-grid three"><div class="field"><label>Операция</label><select name="type">${s.archived ? '<option value="payment">Записать оплату</option>' : '<option value="charge">Добавить долг</option><option value="payment">Записать оплату</option>'}</select></div><div class="field"><label>Валюта суммы</label><select name="currency" id="supplier-currency"><option value="UAH">Гривна (₴)</option><option value="USD">Доллар ($)</option></select></div><div class="field"><label id="supplier-amount-label">Сумма, ₴</label><input class="input" name="amount" type="number" min=".01" step=".01" required></div><div class="field span3"><label>Комментарий</label><input class="input" name="note" placeholder="Закупка, перевод…"></div><div class="notice span3" id="supplier-conversion">Сумма будет учтена в гривне.</div></div><div class="form-actions"><button class="btn primary">Добавить запись</button></div></form><div class="divider"></div><h2 style="font-size:14px">История расчётов</h2>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Запись</th><th>Сумма</th></tr></thead><tbody>${rows.map((x) => `<tr><td>${dt(x.date)}</td><td>${esc(x.note || "Расчёт")}</td><td class="${x.amount < 0 ? "amount-positive" : ""}">${x.amount < 0 ? "−" : "+"} ${cash(Math.abs(x.amount))}</td></tr>`).join("")}</tbody></table></div>` : empty("Операций пока нет.", "↔")}`;
+  }
+  function updateSupplierEntryAmount() {
+    const form = $("#supplier-entry");
+    if (!form) return;
+    const currency = form.elements.currency.value,
+      enteredAmount = n(form.elements.amount.value),
+      label = $("#supplier-amount-label"),
+      conversion = $("#supplier-conversion");
+    if (label) label.textContent = "Сумма, " + (currency === "USD" ? "$" : "₴");
+    if (!conversion) return;
+    if (currency === "USD") {
+      const rate = n(db.fx) || 1,
+        amountUAH = Math.round(enteredAmount * rate * 100) / 100;
+      conversion.textContent = enteredAmount > 0
+        ? cash(enteredAmount, "USD") + " = " + cash(amountUAH) + " по текущему курсу 1 $ = " + rate.toFixed(2) + " ₴. В расчётах будет учтена сумма в гривне."
+        : "Пересчёт по текущему курсу 1 $ = " + rate.toFixed(2) + " ₴.";
+    } else {
+      conversion.textContent = enteredAmount > 0
+        ? "В расчётах будет учтено " + cash(enteredAmount) + "."
+        : "Сумма будет учтена в гривне.";
+    }
   }
   function suppliers() {
     if (supplierId && !find(db.suppliers, supplierId)) supplierId = "";
@@ -1042,6 +1063,10 @@
       supplierId = "";
       suppliers();
     };
+    const entryForm = $("#supplier-entry");
+    entryForm?.addEventListener("input", updateSupplierEntryAmount);
+    entryForm?.addEventListener("change", updateSupplierEntryAmount);
+    updateSupplierEntryAmount();
   }
   function modal(html, className = "") {
     $("#overlay").innerHTML =
@@ -1356,21 +1381,32 @@
     if (e.target.id === "supplier-entry") {
       e.preventDefault();
       const f = new FormData(e.target),
-        amount = n(f.get("amount")),
+        tenderAmount = n(f.get("amount")),
+        currency = String(f.get("currency") || "UAH"),
+        exchangeRate = currency === "USD" ? n(db.fx) : 1,
+        amount = Math.round(tenderAmount * exchangeRate * 100) / 100,
         type = String(f.get("type"));
-      if (amount <= 0) return;
+      if (tenderAmount <= 0) return toast("Введите сумму больше нуля");
+      if (currency === "USD" && exchangeRate <= 0)
+        return toast("Укажите корректный курс доллара в кабинете директора");
       const supplier = find(db.suppliers, supplierId);
       if (supplier?.archived && type === "charge")
         return toast("Восстановите поставщика, чтобы добавить новую закупку");
       const entryId = id(),
         date = new Date().toISOString(),
-        note =
+        noteBase =
           String(f.get("note") || "").trim() ||
-          (type === "payment" ? "Оплата поставщику" : "Дополнительная закупка");
+          (type === "payment" ? "Оплата поставщику" : "Дополнительная закупка"),
+        note = noteBase + (currency === "USD"
+          ? " · " + cash(tenderAmount, "USD") + " по курсу " + exchangeRate.toFixed(2) + " ₴/$"
+          : "");
       db.supplierLedger.unshift({
         id: entryId,
         supplierId,
         amount: type === "payment" ? -amount : amount,
+        tenderAmount,
+        currency,
+        exchangeRate,
         note,
         date,
         type,
