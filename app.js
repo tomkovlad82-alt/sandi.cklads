@@ -27,6 +27,7 @@
     round: 5,
     categories: CATS,
     brands: [],
+    deliveryMethods: [],
     products: [],
     suppliers: [],
     customers: [],
@@ -43,6 +44,7 @@
   } catch {
     db = { ...base };
   }
+  if (!Array.isArray(db.deliveryMethods)) db.deliveryMethods = [];
   let page = "director",
     clientId = "",
     supplierId = "",
@@ -96,6 +98,14 @@
           year: "numeric",
           hour: "2-digit",
           minute: "2-digit",
+        })
+      : "—";
+  const invoiceDate = (x) =>
+    x
+      ? new Date(x).toLocaleDateString("uk-UA", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
         })
       : "—";
   const now = () => new Date().toISOString().slice(0, 16),
@@ -337,6 +347,39 @@
     `<div class="card stat"><div class="stat-top">${label}<span class="stat-icon">${icon}</span></div><div class="stat-value">${val}</div><div class="stat-foot">${foot}</div></div>`;
   const empty = (s, ico = "◌") =>
     `<div class="empty"><div class="empty-icon">${ico}</div>${s}</div>`;
+  function deliveryMethodHtml() {
+    return db.deliveryMethods.length
+      ? db.deliveryMethods
+          .map(
+            (method) =>
+              `<span class="pill delivery-pill">${esc(method)}<button type="button" data-act="delete-delivery-method" data-id="${esc(method)}" aria-label="Удалить способ отправки">×</button></span>`,
+          )
+          .join("")
+      : '<span class="small-text">Способы отправки ещё не добавлены.</span>';
+  }
+  function deliveryMethodOptions() {
+    return db.deliveryMethods
+      .map(
+        (method) =>
+          `<option value="${esc(method)}">${esc(method)}</option>`,
+      )
+      .join("");
+  }
+  function appendInvoiceDetails(paper, rate, deliveryMethod = "") {
+    const meta = paper?.querySelector(".invoice-meta");
+    if (!meta) return;
+    const fxRate = n(rate) || n(db.fx) || 1,
+      details = document.createElement("div");
+    details.className = "invoice-meta-extra";
+    details.innerHTML =
+      "<b>Курс доллара</b>1 $ = " +
+      fxRate.toFixed(2) +
+      " ₴" +
+      (deliveryMethod
+        ? "<br><b>Способ отправки</b>" + esc(deliveryMethod)
+        : "");
+    meta.append(details);
+  }
   function toast(s) {
     $("#toast-area").innerHTML = `<div class="toast">${esc(s)}</div>`;
     setTimeout(() => ($("#toast-area").innerHTML = ""), 2400);
@@ -355,6 +398,7 @@
         invoices: "Накладные",
         accounting: "Бухгалтерия",
         suppliers: "Поставщики",
+        delivery: "Способы отправки",
         notebook: "Заметки",
       }[p];
     $("#rate-chip").textContent = `Курс: 1 $ = ${n(db.fx).toFixed(2)} ₴`;
@@ -369,6 +413,7 @@
       invoices,
       accounting,
       suppliers,
+      delivery,
       notebook,
     })[page]();
   }
@@ -588,6 +633,15 @@
       ),
     );
   }
+  function delivery() {
+    view.innerHTML =
+      head(
+        "Настройки продаж",
+        "Способы отправки",
+        "Добавьте варианты доставки или самовывоза для выбора в накладной.",
+      ) +
+      `<div class="card panel"><div class="panel-head"><div><h2>Список способов</h2><p>Выбранный вариант сохранится в накладной.</p></div><button class="btn primary" data-act="delivery-method">＋ Добавить способ</button></div><div class="category-row">${deliveryMethodHtml()}</div></div>`;
+  }
   function warehouse() {
     const moves = [
       ...db.receipts.map((x) => ({ ...x, delta: x.qty, kind: "Приход" })),
@@ -758,16 +812,27 @@
     return draft
       .map((l, i) => {
         const p = find(db.products, l.productId);
-        return `<div class="line-item"><div class="line-desc">${p ? `<b>${esc(p.name)}</b><small>${esc(p.article)} · ${cash(price(p))} / шт.</small>` : '<span class="muted">Товар не выбран</span>'}</div><label class="line-field"><span>Кол-во</span><input class="input qty" data-i="${i}" type="number" min="1" value="${Math.max(1, n(l.qty))}" aria-label="Количество"></label><label class="line-field"><span>Скидка %</span><input class="input line-discount" data-i="${i}" type="number" min="0" max="100" step="0.1" value="${clampDiscount(l.discountPercent)}" aria-label="Скидка на этот товар, процентов"></label><b class="line-total">${p ? cash(invoiceLineAmount(price(p), l.qty, l.discountPercent)) : "—"}</b><button class="btn small danger" type="button" data-act="remove-line" data-i="${i}">×</button></div>`;
+        return `<div class="line-item"><div class="line-desc">${p ? `<b>${esc(p.name)}</b><small>${esc(p.article)} · ${moneyPairHtml(price(p))} / шт.</small>` : '<span class="muted">Товар не выбран</span>'}</div><label class="line-field"><span>Кол-во</span><input class="input qty" data-i="${i}" type="number" min="1" value="${Math.max(1, n(l.qty))}" aria-label="Количество"></label><label class="line-field"><span>Скидка %</span><input class="input line-discount" data-i="${i}" type="number" min="0" max="100" step="0.1" value="${clampDiscount(l.discountPercent)}" aria-label="Скидка на этот товар, процентов"></label><b class="line-total">${p ? moneyPairHtml(invoiceLineAmount(price(p), l.qty, l.discountPercent)) : "—"}</b><button class="btn small danger" type="button" data-act="remove-line" data-i="${i}">×</button></div>`;
       })
       .join("");
   }
+  function moneyPairHtml(amount, rate = db.fx) {
+    const fx = n(rate) || 1;
+    return (
+      '<span class="money-pair">' +
+      cash(amount) +
+      "<small>" +
+      cash(n(amount) / fx, "USD") +
+      "</small></span>"
+    );
+  }
   function preview(inv = null) {
-    let c, number, date, lines, total, paid;
+    let c, number, date, lines, total, paid, fxRate;
     if (inv) {
       c = find(db.customers, inv.customerId);
       number = inv.number;
       date = inv.date;
+      fxRate = n(inv.fxRate) || n(db.fx) || 1;
       lines = inv.lines.map((l) => ({
         p: l,
         qty: l.qty,
@@ -781,6 +846,7 @@
       paid = inv.paid;
     } else {
       c = find(db.customers, $("#inv-client")?.value);
+      fxRate = n(db.fx) || 1;
       number =
         $("#inv-number")?.value ||
         `НК-${String(db.invoices.length + 1).padStart(4, "0")}`;
@@ -802,23 +868,26 @@
       total = lines.reduce((s, x) => s + x.total, 0);
       paid = Math.min(total, n($("#inv-paid")?.value));
     }
-    return `<div class="invoice-brand"><div><h2>ТЕКСТИЛЬ</h2><p>Домашний текстиль · товарная накладная</p></div><div class="invoice-number"><strong>${esc(number)}</strong>${dt(date ? new Date(date).toISOString() : new Date())}</div></div><div class="invoice-meta"><div><b>Покупатель</b>${esc(c?.name || inv?.customerName || "Клиент не выбран")}<br>${esc(c?.phone || inv?.phone || "")}<br>${esc(c?.address || inv?.address || "")}</div><div><b>Поставщик</b>Домашний текстиль<br>Товарный склад</div></div><table><thead><tr><th>№</th><th>Наименование</th><th>Артикул</th><th>Кол-во</th><th>Цена</th><th>Скидка</th><th>Сумма</th></tr></thead><tbody>${
+    return `<div class="invoice-brand"><div class="invoice-number"><strong>Заказ № ${esc(number)}</strong>${invoiceDate(date ? new Date(date).toISOString() : new Date())}</div></div><div class="invoice-meta"><div><b>Покупатель</b>${esc(c?.name || inv?.customerName || "Клиент не выбран")}<br>${esc(c?.phone || inv?.phone || "")}<br>${esc(c?.address || inv?.address || "")}</div></div><table><thead><tr><th>№</th><th>Наименование</th><th>Артикул</th><th>Кол-во</th><th>Цена, ₴ / $</th><th>Скидка</th><th>Сумма, ₴ / $</th></tr></thead><tbody>${ 
       lines.length
         ? lines
             .map((x, i) => {
               const p = x.p,
                 unit = x.unit ?? price(p);
-              return `<tr><td>${i + 1}</td><td>${esc(p.name)}</td><td>${esc(p.article)}</td><td>${x.qty}</td><td>${cash(unit)}</td><td>${x.discount || 0}%</td><td>${cash(x.total ?? invoiceLineAmount(unit, x.qty, x.discount))}</td></tr>`;
+              return `<tr><td>${i + 1}</td><td>${esc(p.name)}</td><td>${esc(p.article)}</td><td>${x.qty}</td><td>${moneyPairHtml(unit, fxRate)}</td><td>${x.discount || 0}%</td><td>${moneyPairHtml(x.total ?? invoiceLineAmount(unit, x.qty, x.discount), fxRate)}</td></tr>`;
             })
             .join("")
         : `<tr><td colspan="7" style="text-align:center;color:#899493;padding:28px">Добавьте товары, чтобы сформировать накладную</td></tr>`
-    }</tbody></table><div class="invoice-total"><div class="total-line"><span>Количество</span><span>${lines.reduce((s, x) => s + x.qty, 0)} шт.</span></div><div class="total-line"><span>Сумма</span><span>${cash(total)}</span></div><div class="total-line"><span>Оплачено</span><span>${cash(paid)}</span></div><div class="total-line grand"><span>К оплате</span><span>${cash(total - paid)}</span></div></div><div class="invoice-foot">Товар получил(а): ____________________　Подпись: ____________________</div>`;
+    }</tbody></table><div class="invoice-total"><div class="total-line"><span>Количество</span><span>${lines.reduce((s, x) => s + x.qty, 0)} шт.</span></div><div class="total-line"><span>Сумма</span><span>${moneyPairHtml(total, fxRate)}</span></div><div class="total-line"><span>Оплачено</span><span>${moneyPairHtml(paid, fxRate)}</span></div><div class="total-line grand"><span>К оплате</span><span>${moneyPairHtml(total - paid, fxRate)}</span></div></div>`;
   }
   function updateInvoice() {
     const lines = $("#invoice-lines");
     if (lines) lines.innerHTML = invoiceLineHtml();
     const p = $("#printable");
-    if (p) p.innerHTML = preview();
+    if (p) {
+      p.innerHTML = preview();
+      appendInvoiceDetails(p, db.fx, $("#inv-delivery")?.value || "");
+    }
   }
   function invoiceHistory() {
     return db.invoices.length
@@ -840,6 +909,11 @@
         "Выберите клиента и товары. Предпросмотр обновляется автоматически.",
       ) +
       `<div class="split"><div class="card panel no-print"><div class="panel-head"><div><h2>Данные накладной</h2><p>Сохранение спишет товар со склада</p></div></div><form id="inv-form"><div class="form-grid"><div class="field span2"><label>Найти клиента</label><input class="input" id="inv-client-search" placeholder="Введите имя или фамилию"></div><div class="field span2"><label>Клиент</label><select id="inv-client" name="customerId" required>${clientOpts()}</select></div><div class="field"><label>Дата и время</label><input class="input" id="inv-date" name="date" type="datetime-local" value="${now()}"></div><div class="field"><label>Номер</label><input class="input" id="inv-number" name="number" value="НК-${String(db.invoices.length + 1).padStart(4, "0")}"></div><div class="field span2"><label>Поиск товара по названию или артикулу</label><input class="input" id="inv-search" placeholder="Начните вводить товар"></div></div><div class="divider"></div><div class="row-between"><b style="font-size:12px">Товары в накладной</b><span class="small-text">Можно оформить предзаказ в минус</span></div><div id="invoice-lines" class="top-gap">${invoiceLineHtml()}</div><div class="line-add top-gap"><div class="field"><label>Добавить товар</label><select id="line-product">${productOpts()}</select></div><div class="field"><label>Количество</label><input class="input" id="line-qty" type="number" min="1" value="1"></div><button type="button" class="btn soft" data-act="add-line">＋ Строка</button></div><div class="divider"></div><div class="field"><label>Уже оплачено, ₴</label><input class="input" id="inv-paid" name="paid" type="number" min="0" step=".01" value="0"></div><div class="notice top-gap">Остаток суммы автоматически попадёт в баланс клиента.</div><div class="form-actions"><button class="btn primary">Сохранить накладную</button></div></form></div><div class="sticky"><div class="row-between no-print" style="margin-bottom:9px"><span class="small-text">Электронная накладная · предпросмотр</span><button class="btn small" data-act="print-current">Печать</button></div><div id="printable" class="invoice-paper">${preview()}</div></div></div><div class="card panel top-gap no-print"><div class="panel-head"><div><h2>Сохранённые накладные</h2><p>Последние документы</p></div></div>${invoiceHistory()}</div>`;
+    $("#inv-client")?.closest(".field")?.insertAdjacentHTML(
+      "afterend",
+      `<div class="field span2"><label>Способ отправки</label><select id="inv-delivery" name="deliveryMethod"><option value="">Не указан</option>${deliveryMethodOptions()}</select></div>`,
+    );
+    updateInvoice();
     $("#inv-form").addEventListener("input", (e) => {
       if (!e.target.matches(".qty, .line-discount")) updateInvoice();
     });
@@ -884,10 +958,12 @@
         customerName: c.name,
         phone: c.phone,
         address: c.address,
+        deliveryMethod: String(f.get("deliveryMethod") || ""),
         date,
         lines,
         total,
         paid,
+        fxRate: n(db.fx) || 1,
       });
       db.accounting.unshift({
         id: id(),
@@ -1235,6 +1311,31 @@
       }
       return;
     }
+    if (a === "delivery-method") {
+      const value = prompt("Название способа отправки или доставки");
+      if (value === null) return;
+      const method = value.trim();
+      if (!method) return toast("Введите название способа отправки");
+      if (
+        db.deliveryMethods.some(
+          (item) => item.toLocaleLowerCase() === method.toLocaleLowerCase(),
+        )
+      )
+        return toast("Такой способ отправки уже есть");
+      db.deliveryMethods.push(method);
+      save();
+      toast("Способ отправки добавлен");
+      delivery();
+      return;
+    }
+    if (a === "delete-delivery-method") {
+      const method = b.dataset.id;
+      if (!confirm(`Удалить способ отправки «${method}»?`)) return;
+      db.deliveryMethods = db.deliveryMethods.filter((item) => item !== method);
+      save();
+      delivery();
+      return;
+    }
     if (a === "fx") {
       const val = prompt("Курс 1 USD к UAH", String(db.fx));
       if (val !== null && n(val) > 0) {
@@ -1283,6 +1384,11 @@
       if (!inv) return;
       $("#overlay").innerHTML =
         `<div class="modal-backdrop"><div style="background:white;padding:24px;border-radius:12px;max-height:90vh;overflow:auto;width:min(850px,100%)"><div class="row-between no-print"><b>${esc(inv.number)}</b><button class="btn small" data-act="print-modal">Печать накладной</button><button class="btn small" data-act="close">Закрыть</button></div><div id="saved-print" class="invoice-paper top-gap">${preview(inv)}</div></div></div>`;
+      appendInvoiceDetails(
+        $("#saved-print"),
+        inv.fxRate,
+        inv.deliveryMethod || "",
+      );
       return;
     }
     if (a === "print-modal") {
@@ -1328,7 +1434,7 @@
       const row = e.target.closest(".line-item"),
         item = find(db.products, draft[i]?.productId);
       if (row && item)
-        row.querySelector(".line-total").textContent = cash(
+        row.querySelector(".line-total").innerHTML = moneyPairHtml(
           invoiceLineAmount(
             price(item),
             draft[i]?.qty,

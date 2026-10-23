@@ -488,6 +488,20 @@ tr:last-child td {
   padding: 7px 10px;
   font-size: 10px;
 }
+.delivery-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.delivery-pill button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #8b5b58;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
 .split {
   display: grid;
   grid-template-columns: minmax(280px, 0.82fr) minmax(420px, 1.18fr);
@@ -536,7 +550,7 @@ tr:last-child td {
 }
 .invoice-meta {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 15px;
   font-size: 11px;
   margin-bottom: 22px;
@@ -561,6 +575,17 @@ tr:last-child td {
   width: 230px;
   margin-top: 15px;
 }
+.money-pair {
+  display: inline-block;
+  white-space: nowrap;
+}
+.money-pair small {
+  display: block;
+  margin-top: 2px;
+  color: #657775;
+  font-size: 9px;
+  font-weight: 500;
+}
 .total-line {
   display: flex;
   justify-content: space-between;
@@ -573,13 +598,6 @@ tr:last-child td {
   padding-top: 11px;
   font-size: 15px;
   font-weight: 750;
-}
-.invoice-foot {
-  margin-top: 34px;
-  border-top: 1px solid #e4e9e6;
-  padding-top: 12px;
-  color: #899493;
-  font-size: 9px;
 }
 .notice {
   padding: 12px 14px;
