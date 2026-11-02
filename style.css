@@ -341,6 +341,9 @@ textarea {
   resize: vertical;
   min-height: 80px;
 }
+.field[hidden] {
+  display: none;
+}
 .field {
   display: grid;
   gap: 6px;
@@ -615,7 +618,10 @@ tr:last-child td {
   gap: 8px;
   align-items: end;
 }
-.inline-form .field {
+.inline-form .field[hidden] {
+  display: none;
+}
+.field {
   flex: 1;
 }
 .line-add {

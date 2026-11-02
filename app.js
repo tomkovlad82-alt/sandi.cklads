@@ -27,6 +27,7 @@
     round: 5,
     categories: CATS,
     brands: [],
+    sizes: [],
     deliveryMethods: [],
     products: [],
     suppliers: [],
@@ -45,6 +46,7 @@
     db = { ...base };
   }
   if (!Array.isArray(db.deliveryMethods)) db.deliveryMethods = [];
+  if (!Array.isArray(db.sizes)) db.sizes = [];
   let page = "director",
     clientId = "",
     supplierId = "",
@@ -329,7 +331,7 @@
       opts(
         db.products.filter((p) => !p.archived).map((p) => ({
           id: p.id,
-          label: p.article + " · " + p.name,
+          label: p.article + " · " + productTitle(p),
         })),
         "",
         "Выберите товар",
@@ -364,6 +366,45 @@
           `<option value="${esc(method)}">${esc(method)}</option>`,
       )
       .join("");
+  }
+  function sizeOptions(selected = "") {
+    const sizes = [...db.sizes];
+    if (selected && !sizes.includes(selected)) sizes.unshift(selected);
+    return (
+      '<option value="">Без размера</option>' +
+      sizes
+        .map(
+          (size) =>
+            `<option value="${esc(size)}" ${size === selected ? "selected" : ""}>${esc(size)}</option>`,
+        )
+        .join("")
+    );
+  }
+  function sizePillsHtml() {
+    return db.sizes.length
+      ? db.sizes
+          .map(
+            (size) =>
+              `<span class="pill delivery-pill">${esc(size)}<button type="button" data-act="delete-size" data-id="${esc(size)}" aria-label="Удалить размер">×</button></span>`,
+          )
+          .join("")
+      : '<span class="small-text">Размеры ещё не добавлены.</span>';
+  }
+  function productTitle(product) {
+    return product
+      ? product.size
+        ? `${product.name} · ${product.size}`
+        : product.name
+      : "Товар";
+  }
+  function refreshSizeControls() {
+    document.querySelectorAll('select[name="size"]').forEach((select) => {
+      const selected = select.value;
+      select.innerHTML = sizeOptions(selected);
+      select.value = selected;
+    });
+    const list = $("#size-list");
+    if (list) list.innerHTML = sizePillsHtml();
   }
   function appendInvoiceDetails(paper, rate, deliveryMethod = "") {
     const meta = paper?.querySelector(".invoice-meta");
@@ -422,7 +463,7 @@
       ? `<table><thead><tr><th>Товар</th><th>Категория / бренд</th><th>Закупка</th><th>Цена продажи</th><th>Остаток</th><th>Действия</th></tr></thead><tbody>${items
           .map(
             (p) =>
-              `<tr class="${p.archived ? "archived-row" : ""}"><td><div class="product-cell">${p.image ? `<img class="product-thumb" src="${p.image}" alt="">` : '<div class="product-placeholder">▦</div>'}<div><b>${esc(p.name)}</b>${p.archived ? '<span class="badge muted-badge">В архиве</span>' : ""}<span class="subline">Артикул ${esc(p.article)}</span></div></div></td><td>${esc(p.category || "Без категории")}<span class="subline">${esc(p.brand || "Без бренда")}</span></td><td>${cash(p.cost, p.currency)}<span class="subline">Наценка ${n(p.markup)}%</span></td><td><b>${cash(price(p))}</b><span class="subline">${cash(price(p) / n(p.fx || db.fx), "USD")}</span></td><td><span class="badge ${stock(p.id) <= 5 ? "warn" : ""}">${stock(p.id)} шт.</span></td><td><div class="table-actions">${p.archived ? `<button class="btn small" data-act="restore-product" data-id="${p.id}">Вернуть</button>` : `<button class="btn small" data-act="edit-product" data-id="${p.id}">Изменить</button><button class="btn small danger" data-act="delete-product" data-id="${p.id}">Удалить</button>`}</div></td></tr>`,
+              `<tr class="${p.archived ? "archived-row" : ""}"><td><div class="product-cell">${p.image ? `<img class="product-thumb" src="${p.image}" alt="">` : '<div class="product-placeholder">▦</div>'}<div><b>${esc(p.name)}</b>${p.archived ? '<span class="badge muted-badge">В архиве</span>' : ""}<span class="subline">Артикул ${esc(p.article)}</span>${p.size ? `<span class="subline">Размер ${esc(p.size)}</span>` : ""}</div></div></td><td>${esc(p.category || "Без категории")}<span class="subline">${esc(p.brand || "Без бренда")}</span></td><td>${cash(p.cost, p.currency)}<span class="subline">Наценка ${n(p.markup)}%</span></td><td><b>${cash(price(p))}</b><span class="subline">${cash(price(p) / n(p.fx || db.fx), "USD")}</span></td><td><span class="badge ${stock(p.id) <= 5 ? "warn" : ""}">${stock(p.id)} шт.</span></td><td><div class="table-actions">${p.archived ? `<button class="btn small" data-act="restore-product" data-id="${p.id}">Вернуть</button>` : `<button class="btn small" data-act="edit-product" data-id="${p.id}">Изменить</button><button class="btn small danger" data-act="delete-product" data-id="${p.id}">Удалить</button>`}</div></td></tr>`,
           )
           .join("")}</tbody></table>`
       : empty("Добавьте товар в каталог или измените поиск.", "▦");
@@ -440,7 +481,92 @@
           `<option value="${esc(brand)}" ${p.brand === brand ? "selected" : ""}>${esc(brand)}</option>`,
       )
       .join("");
-    return `<h2>Изменить товар</h2><p>Обновите карточку товара. Уже сохранённые накладные и поставки останутся в истории.</p><form id="edit-product" data-id="${p.id}"><div class="form-grid three"><div class="field"><label>Название</label><input class="input" name="name" value="${esc(p.name)}" required></div><div class="field"><label>Артикул</label><input class="input" name="article" value="${esc(p.article)}" required></div><div class="field"><label>Категория</label><select name="category"><option value="" ${p.category ? "" : "selected"}>Без категории</option>${categoryOptions}${p.category && !db.categories.includes(p.category) ? `<option value="${esc(p.category)}" selected>${esc(p.category)}</option>` : ""}</select></div><div class="field"><label>Закупочная цена</label><input class="input" name="cost" type="number" min="0" step=".01" value="${n(p.cost)}" required></div><div class="field"><label>Валюта</label><select name="currency"><option value="USD" ${p.currency === "USD" ? "selected" : ""}>USD</option><option value="UAH" ${p.currency === "UAH" ? "selected" : ""}>UAH</option></select></div><div class="field"><label>Курс доллара</label><input class="input" name="fx" type="number" min=".01" step=".01" value="${n(p.fx) || n(db.fx)}"></div><div class="field"><label>Наценка, %</label><input class="input" name="markup" type="number" step="1" value="${n(p.markup)}"></div><div class="field"><label>Бренд</label><select name="brand"><option value="">Без бренда</option>${brandOptions}${p.brand && !db.brands.includes(p.brand) ? `<option value="${esc(p.brand)}" selected>${esc(p.brand)}</option>` : ""}</select></div><div class="field span3"><label>Заменить фото (необязательно)</label><input class="input" name="image" type="file" accept="image/*"><small>Если новое фото не выбирать, останется текущее.</small><img id="edit-image-preview" class="upload-preview" src="${p.image || ""}" ${p.image ? "" : "hidden"} alt="Предпросмотр товара"></div></div><div class="form-actions"><button type="button" class="btn" data-act="close">Отмена</button><button class="btn primary">Сохранить изменения</button></div></form>`;
+    return `<h2>Изменить товар</h2><p>Обновите карточку товара. Уже сохранённые накладные и поставки останутся в истории.</p><form id="edit-product" data-id="${p.id}"><div class="form-grid three"><div class="field"><label>Название</label><input class="input" name="name" value="${esc(p.name)}" required></div><div class="field"><label>Артикул</label><input class="input" name="article" value="${esc(p.article)}" required></div><div class="field"><label>Категория</label><select name="category"><option value="" ${p.category ? "" : "selected"}>Без категории</option>${categoryOptions}${p.category && !db.categories.includes(p.category) ? `<option value="${esc(p.category)}" selected>${esc(p.category)}</option>` : ""}</select></div><div class="field"><label data-cost-label>Закупочная цена</label><input class="input" name="cost" type="number" min="0" step=".01" value="${n(p.cost)}" required></div><div class="field"><label>Ввод цены</label><select name="costMode"><option value="purchase">Закупочная</option><option value="ready">Готовая до скидки</option></select></div><div class="field" hidden><label>Вычесть скидку, %</label><input class="input" name="costDiscountPercent" type="number" min="0" max="99.9" step=".1" value="17"></div><div class="field"><label>Валюта</label><select name="currency"><option value="USD" ${p.currency === "USD" ? "selected" : ""}>USD</option><option value="UAH" ${p.currency === "UAH" ? "selected" : ""}>UAH</option></select></div><div class="field"><label>Курс доллара</label><input class="input" name="fx" type="number" min=".01" step=".01" value="${n(p.fx) || n(db.fx)}"></div><div class="field"><label>Наценка, %</label><input class="input" name="markup" type="number" step="1" value="${n(p.markup)}"></div><div class="field"><label>Бренд</label><select name="brand"><option value="">Без бренда</option>${brandOptions}${p.brand && !db.brands.includes(p.brand) ? `<option value="${esc(p.brand)}" selected>${esc(p.brand)}</option>` : ""}</select></div><div class="field"><label>Размер</label><div class="row-between"><select name="size">${sizeOptions(p.size)}</select><button class="btn small" type="button" data-act="size">＋</button></div></div><div class="field span3"><label>Заменить фото (необязательно)</label><input class="input" name="image" type="file" accept="image/*"><small>Если новое фото не выбирать, останется текущее.</small><img id="edit-image-preview" class="upload-preview" src="${p.image || ""}" ${p.image ? "" : "hidden"} alt="Предпросмотр товара"></div></div><div class="notice span3" id="edit-price-hint">Изменение закупочной цены пересчитает цену продажи.</div><div class="form-actions"><button type="button" class="btn" data-act="close">Отмена</button><button class="btn primary">Сохранить изменения</button></div></form>`;
+  }
+  function productCostFromForm(form) {
+    const data = new FormData(form),
+      entered = n(data.get("cost")),
+      mode = String(data.get("costMode") || "purchase"),
+      discountPercent = n(data.get("costDiscountPercent"));
+    return {
+      entered,
+      mode,
+      discountPercent,
+      cost:
+        mode === "ready"
+          ? entered * (1 - discountPercent / 100)
+          : entered,
+    };
+  }
+  function updateProductPriceHint(form, target) {
+    const hint = $(target);
+    if (!form || !hint) return;
+    const { entered, mode, discountPercent, cost } =
+        productCostFromForm(form),
+      data = new FormData(form),
+      currency = String(data.get("currency") || "USD");
+    if (mode === "ready" && (discountPercent < 0 || discountPercent >= 100)) {
+      hint.textContent = "Скидка должна быть от 0% и меньше 100%.";
+      return;
+    }
+    if (!entered) {
+      hint.textContent =
+        mode === "ready"
+          ? "Введите готовую цену; закупочная цена рассчитается после скидки."
+          : "Введите закупочную стоимость для расчёта цены продажи.";
+      return;
+    }
+    const fx = n(data.get("fx")) || n(db.fx),
+      step = n(data.get("round")) || n(db.round) || 5,
+      markup = n(data.get("markup")),
+      raw =
+        cost *
+        (currency === "USD" ? fx : 1) *
+        (1 + markup / 100),
+      retail = Math.round(raw / step) * step,
+      costInfo =
+        mode === "ready"
+          ? `Готовая цена ${cash(entered, currency)} − ${discountPercent}% = закупка ${cash(cost, currency)} · `
+          : `Закупочная цена: ${cash(cost, currency)} · `;
+    hint.innerHTML =
+      `${costInfo}Наценка ${markup}%: <b>${cash(raw)}</b> · после округления до ${step} ₴: <b>${cash(retail)}</b> (${cash(retail / fx, "USD")})`;
+  }
+  function setupProductPriceForm(form, hintTarget) {
+    const mode = form.querySelector('[name="costMode"]'),
+      costInput = form.querySelector('[name="cost"]'),
+      discountField = form
+        .querySelector('[name="costDiscountPercent"]')
+        .closest(".field");
+    mode.dataset.lastMode = mode.value;
+    const refresh = () => {
+      const ready = mode.value === "ready";
+      discountField.hidden = !ready;
+      discountField.querySelector("input").disabled = !ready;
+      form.querySelector("[data-cost-label]").textContent = ready
+        ? "Готовая цена до скидки"
+        : "Закупочная цена";
+      updateProductPriceHint(form, hintTarget);
+    };
+    mode.addEventListener("change", () => {
+      const previous = mode.dataset.lastMode,
+        next = mode.value,
+        entered = n(costInput.value),
+        discount = Math.min(
+          99.9,
+          Math.max(0, n(form.elements.costDiscountPercent.value)),
+        ),
+        factor = 1 - discount / 100,
+        purchaseCost = previous === "ready" ? entered * factor : entered;
+      if (next === "ready" && factor > 0)
+        costInput.value = purchaseCost ? (purchaseCost / factor).toFixed(2) : "";
+      else if (next === "purchase")
+        costInput.value = purchaseCost ? purchaseCost.toFixed(2) : "";
+      mode.dataset.lastMode = next;
+      refresh();
+    });
+    form.addEventListener("input", refresh);
+    form.addEventListener("change", refresh);
+    refresh();
   }
   function director() {
     const receivable = db.customers.reduce((s, c) => s + debt(c.id), 0),
@@ -453,12 +579,11 @@
         `<button class="btn" data-act="fx">Курс $ ${n(db.fx).toFixed(2)}</button>`,
       ) +
       `<div class="grid stats">${stat("Позиций каталога", db.products.filter((p) => !p.archived).length, "Артикулы и цены", "▦")}${stat("Единиц на складе", totalStock(), "По всем категориям", "▤")}${stat("Долг клиентов", cash(receivable), "Открытые балансы", "↗")}${stat("Долг поставщикам", cash(payables), "Открытые расчёты", "☏")}</div>
-<details class="details"><summary>＋ Добавить товар в каталог</summary><div class="details-body"><form id="product-form"><div class="form-grid three"><div class="field"><label>Название</label><input class="input" name="name" required></div><div class="field"><label>Артикул</label><input class="input" name="article" required></div><div class="field"><label>Категория</label><select name="category">${db.categories.map((x) => `<option>${esc(x)}</option>`).join("")}<option value="">Без категории</option></select></div><div class="field"><label>Закупочная цена</label><input class="input" name="cost" type="number" min="0" step=".01" required></div><div class="field"><label>Валюта</label><select name="currency"><option value="USD">USD</option><option value="UAH">UAH</option></select></div><div class="field"><label>Курс доллара</label><input class="input" name="fx" type="number" min=".01" step=".01" value="${n(db.fx)}"></div><div class="field"><label>Наценка, %</label><input class="input" name="markup" type="number" step="1" value="${n(db.markup)}"></div><div class="field"><label>Округлять до, ₴</label><input class="input" name="round" type="number" min="1" value="${n(db.round)}"></div><div class="field"><label>Бренд</label><div class="row-between"><select name="brand"><option value="">Без бренда</option>${db.brands.map((x) => `<option>${esc(x)}</option>`).join("")}</select><button class="btn small" type="button" data-act="brand">＋</button></div></div><div class="field span3"><label>Фото товара (необязательно)</label><input class="input" name="image" type="file" accept="image/*"><small>Изображение уменьшится для хранения в браузере.</small><img id="image-preview" class="upload-preview" hidden alt="Предпросмотр товара"></div><div class="notice span3" id="price-hint">Введите закупочную стоимость для расчёта цены продажи.</div></div><div class="form-actions"><button class="btn primary">Добавить товар</button></div></form></div></details>
+<details class="details"><summary>＋ Добавить товар в каталог</summary><div class="details-body"><form id="product-form"><div class="form-grid three"><div class="field"><label>Название</label><input class="input" name="name" required></div><div class="field"><label>Артикул</label><input class="input" name="article" required></div><div class="field"><label>Категория</label><select name="category">${db.categories.map((x) => `<option>${esc(x)}</option>`).join("")}<option value="">Без категории</option></select></div><div class="field"><label data-cost-label>Закупочная цена</label><input class="input" name="cost" type="number" min="0" step=".01" required></div><div class="field"><label>Ввод цены</label><select name="costMode"><option value="purchase">Закупочная</option><option value="ready">Готовая до скидки</option></select></div><div class="field" hidden><label>Вычесть скидку, %</label><input class="input" name="costDiscountPercent" type="number" min="0" max="99.9" step=".1" value="17"></div><div class="field"><label>Валюта</label><select name="currency"><option value="USD">USD</option><option value="UAH">UAH</option></select></div><div class="field"><label>Курс доллара</label><input class="input" name="fx" type="number" min=".01" step=".01" value="${n(db.fx)}"></div><div class="field"><label>Наценка, %</label><input class="input" name="markup" type="number" step="1" value="${n(db.markup)}"></div><div class="field"><label>Округлять до, ₴</label><input class="input" name="round" type="number" min="1" value="${n(db.round)}"></div><div class="field"><label>Бренд</label><div class="row-between"><select name="brand"><option value="">Без бренда</option>${db.brands.map((x) => `<option>${esc(x)}</option>`).join("")}</select><button class="btn small" type="button" data-act="brand">＋</button></div></div><div class="field"><label>Размер</label><div class="row-between"><select name="size">${sizeOptions()}</select><button class="btn small" type="button" data-act="size">＋</button></div></div><div class="field span3"><label>Фото товара (необязательно)</label><input class="input" name="image" type="file" accept="image/*"><small>Изображение уменьшится для хранения в браузере.</small><img id="image-preview" class="upload-preview" hidden alt="Предпросмотр товара"></div><div class="notice span3" id="price-hint">Введите закупочную стоимость для расчёта цены продажи.</div></div><div class="form-actions"><button class="btn primary">Добавить товар</button></div></form></div></details>
 <details class="details"><summary>＋ Оформить поступление</summary><div class="details-body"><form id="receipt-form"><div class="form-grid three"><div class="field"><label>Товар</label><select name="productId" required>${productOpts()}</select></div><div class="field"><label>Количество, шт.</label><input class="input" name="qty" type="number" min="1" step="1" required></div><div class="field"><label>От кого поступил</label><select name="supplierId" required>${supplierOpts()}</select></div><div class="field"><label>Дата и время</label><input class="input" name="date" type="datetime-local" value="${now()}" required></div><div class="field"><label>Скидка поставщика, %</label><input class="input" name="discountPercent" type="number" min="0" max="100" step="0.1" value="0"></div><div class="notice span3" id="receipt-total">Укажите товар и количество, чтобы увидеть сумму к учёту.</div><div class="notice span3">Поступление увеличит остаток, а сумма с учётом скидки попадёт в расходы и баланс поставщика.</div></div><div class="form-actions"><button class="btn primary">Зафиксировать поступление</button></div></form>${db.suppliers.some((supplier) => !supplier.archived) ? "" : '<p class="small-text">Добавьте или восстановите поставщика в кабинете «Поставщики».</p>'}</div></details>
-<div class="card panel"><div class="panel-head"><div><h2>Каталог товаров</h2><p>Поиск по названию и артикулу</p></div><button class="btn small" data-act="category">＋ Категория</button></div><div class="toolbar"><div class="search"><input class="input" id="prod-search" placeholder="Найти товар или артикул"></div><label class="archive-toggle"><input type="checkbox" id="show-archived-products"> Показать архив</label><select id="cat-filter" style="max-width:230px"><option value="">Все категории</option>${db.categories.map((c) => `<option>${esc(c)}</option>`).join("")}</select></div><div id="prod-table" class="table-wrap top-gap">${tableProducts(db.products.filter((p) => showArchivedProducts ? p.archived : !p.archived))}</div><div class="divider"></div><div class="panel-head"><div><h2>Категории</h2><p>Можно добавлять свои категории</p></div></div><div class="category-row">${db.categories.map((c) => `<span class="pill">${esc(c)}</span>`).join("")}</div></div>`;
+<div class="card panel"><div class="panel-head"><div><h2>Каталог товаров</h2><p>Поиск по названию, артикулу и размеру</p></div><button class="btn small" data-act="category">＋ Категория</button></div><div class="toolbar"><div class="search"><input class="input" id="prod-search" placeholder="Название, артикул или размер"></div><label class="archive-toggle"><input type="checkbox" id="show-archived-products"> Показать архив</label><select id="cat-filter" style="max-width:230px"><option value="">Все категории</option>${db.categories.map((c) => `<option>${esc(c)}</option>`).join("")}</select></div><div id="prod-table" class="table-wrap top-gap">${tableProducts(db.products.filter((p) => showArchivedProducts ? p.archived : !p.archived))}</div><div class="divider"></div><div class="panel-head"><div><h2>Категории</h2><p>Можно добавлять свои категории</p></div></div><div class="category-row">${db.categories.map((c) => `<span class="pill">${esc(c)}</span>`).join("")}</div><div class="divider"></div><div class="panel-head"><div><h2>Размеры</h2><p>Справочник для товаров</p></div><button class="btn small" data-act="size">＋ Добавить размер</button></div><div class="category-row" id="size-list">${sizePillsHtml()}</div></div>`;
     const pf = $("#product-form");
-    pf.addEventListener("input", priceHint);
-    pf.addEventListener("change", priceHint);
+    setupProductPriceForm(pf, "#price-hint");
     pf.querySelector('[name="image"]').onchange = (e) => {
       const file = e.target.files[0],
         img = $("#image-preview");
@@ -479,8 +604,14 @@
         fx = n(f.get("fx")) || db.fx,
         step = n(f.get("round")) || 5,
         cur = f.get("currency"),
-        cost = n(f.get("cost")),
+        priceInput = productCostFromForm(pf),
+        cost = priceInput.cost,
         markup = n(f.get("markup"));
+      if (
+        priceInput.mode === "ready" &&
+        (priceInput.discountPercent < 0 || priceInput.discountPercent >= 100)
+      )
+        return toast("Скидка должна быть от 0% и меньше 100%");
       db.fx = fx;
       db.round = step;
       db.markup = markup;
@@ -501,6 +632,7 @@
         article: String(f.get("article")).trim(),
         category: String(f.get("category") || ""),
         brand,
+        size: String(f.get("size") || ""),
         cost,
         currency: cur,
         fx,
@@ -532,7 +664,7 @@
         discountNote = discountPercent
           ? ` · скидка ${discountPercent}% (−${cash(discountAmount)})`
           : "",
-        receiptNote = `Поставка ${p.name} · ${qty} шт.${discountNote}`;
+        receiptNote = `Поставка ${productTitle(p)} · ${qty} шт.${discountNote}`;
       db.receipts.unshift({
         id: receiptId,
         productId: p.id,
@@ -577,7 +709,6 @@
     };
     $("#receipt-form").addEventListener("input", receiptPreview);
     $("#receipt-form").addEventListener("change", receiptPreview);
-    priceHint();
     receiptPreview();
   }
   function receiptPreview() {
@@ -599,24 +730,6 @@
     $("#receipt-total").innerHTML =
       `Закупка: <b>${cash(gross)}</b> · скидка ${discount}%: <b>− ${cash(discountAmount)}</b> · к учёту: <b>${cash(net)}</b>`;
   }
-  function priceHint() {
-    const f = new FormData($("#product-form"));
-    const cost = n(f.get("cost"));
-    if (!cost) {
-      $("#price-hint").textContent =
-        "Введите закупочную стоимость для расчёта цены продажи.";
-      return;
-    }
-    const fx = n(f.get("fx")) || db.fx,
-      step = n(f.get("round")) || 5,
-      raw =
-        cost *
-        (f.get("currency") === "USD" ? fx : 1) *
-        (1 + n(f.get("markup")) / 100),
-      p = Math.round(raw / step) * step;
-    $("#price-hint").innerHTML =
-      `Наценка ${n(f.get("markup"))}%: <b>${cash(raw)}</b> · после округления до ${step} ₴: <b>${cash(p)}</b> (${cash(p / fx, "USD")})`;
-  }
   function filterProducts() {
     const q = $("#prod-search").value.toLowerCase(),
       c = $("#cat-filter").value,
@@ -629,7 +742,8 @@
           (!c || p.category === c) &&
           (!q ||
             p.name.toLowerCase().includes(q) ||
-            p.article.toLowerCase().includes(q)),
+            p.article.toLowerCase().includes(q) ||
+            (p.size || "").toLowerCase().includes(q)),
       ),
     );
   }
@@ -676,7 +790,7 @@
               .slice(0, 60)
               .map(
                 (m) =>
-                  `<tr><td>${dt(m.date)}</td><td>${esc(find(db.products, m.productId)?.name || "Товар")}</td><td><span class="badge ${m.delta < 0 ? "red" : ""}">${m.delta > 0 ? "+" : ""}${m.delta} шт.</span></td><td>${esc(find(db.suppliers, m.supplierId)?.name || m.kind)}${m.discountPercent > 0 ? `<span class="subline">Скидка ${n(m.discountPercent)}% · −${cash(m.discountAmount)}</span>` : ""}</td></tr>`,
+                  `<tr><td>${dt(m.date)}</td><td>${esc(productTitle(find(db.products, m.productId)))}</td><td><span class="badge ${m.delta < 0 ? "red" : ""}">${m.delta > 0 ? "+" : ""}${m.delta} шт.</span></td><td>${esc(find(db.suppliers, m.supplierId)?.name || m.kind)}${m.discountPercent > 0 ? `<span class="subline">Скидка ${n(m.discountPercent)}% · −${cash(m.discountAmount)}</span>` : ""}</td></tr>`,
               )
               .join("")}</tbody></table></div>`
           : empty("Поступлений и списаний пока нет.", "↕")
@@ -702,7 +816,7 @@
       ($("#stock-table").innerHTML = stockTable(
         db.products.filter((p) =>
           !p.archived &&
-          (p.name + " " + p.article)
+          (p.name + " " + p.article + " " + (p.size || ""))
             .toLowerCase()
             .includes(e.target.value.toLowerCase()),
         ),
@@ -710,7 +824,7 @@
   }
   function stockTable(items) {
     return items.length
-      ? `<table><thead><tr><th>Товар</th><th>Категория</th><th>Бренд</th><th>Остаток</th><th>Цена продажи</th><th>Стоимость остатка*</th></tr></thead><tbody>${items.map((p) => `<tr><td><b>${esc(p.name)}</b><span class="subline">${esc(p.article)}</span></td><td>${esc(p.category || "—")}</td><td>${esc(p.brand || "—")}</td><td><span class="badge ${stock(p.id) < 0 ? "red" : stock(p.id) <= 5 ? "warn" : ""}">${stock(p.id)} шт.</span></td><td>${cash(price(p))}</td><td>${cash(stock(p.id) * purchaseUnitCost(p))}</td></tr>`).join("")}</tbody></table><p class="small-text">* По закупочной стоимости с учётом скидок поставщиков.</p>`
+      ? `<table><thead><tr><th>Товар</th><th>Категория</th><th>Бренд</th><th>Остаток</th><th>Цена продажи</th><th>Стоимость остатка*</th></tr></thead><tbody>${items.map((p) => `<tr><td><b>${esc(p.name)}</b><span class="subline">${esc(p.article)}</span>${p.size ? `<span class="subline">Размер ${esc(p.size)}</span>` : ""}</td><td>${esc(p.category || "—")}</td><td>${esc(p.brand || "—")}</td><td><span class="badge ${stock(p.id) < 0 ? "red" : stock(p.id) <= 5 ? "warn" : ""}">${stock(p.id)} шт.</span></td><td>${cash(price(p))}</td><td>${cash(stock(p.id) * purchaseUnitCost(p))}</td></tr>`).join("")}</tbody></table><p class="small-text">* По закупочной стоимости с учётом скидок поставщиков.</p>`
       : empty("В каталоге пока нет товаров.", "▤");
   }
   function customerRows(items) {
@@ -812,7 +926,7 @@
     return draft
       .map((l, i) => {
         const p = find(db.products, l.productId);
-        return `<div class="line-item"><div class="line-desc">${p ? `<b>${esc(p.name)}</b><small>${esc(p.article)} · ${moneyPairHtml(price(p))} / шт.</small>` : '<span class="muted">Товар не выбран</span>'}</div><label class="line-field"><span>Кол-во</span><input class="input qty" data-i="${i}" type="number" min="1" value="${Math.max(1, n(l.qty))}" aria-label="Количество"></label><label class="line-field"><span>Скидка %</span><input class="input line-discount" data-i="${i}" type="number" min="0" max="100" step="0.1" value="${clampDiscount(l.discountPercent)}" aria-label="Скидка на этот товар, процентов"></label><b class="line-total">${p ? moneyPairHtml(invoiceLineAmount(price(p), l.qty, l.discountPercent)) : "—"}</b><button class="btn small danger" type="button" data-act="remove-line" data-i="${i}">×</button></div>`;
+        return `<div class="line-item"><div class="line-desc">${p ? `<b>${esc(p.name)}</b><small>${esc(p.article)}${p.size ? " · " + esc(p.size) : ""} · ${moneyPairHtml(price(p))} / шт.</small>` : '<span class="muted">Товар не выбран</span>'}</div><label class="line-field"><span>Кол-во</span><input class="input qty" data-i="${i}" type="number" min="1" value="${Math.max(1, n(l.qty))}" aria-label="Количество"></label><label class="line-field"><span>Скидка %</span><input class="input line-discount" data-i="${i}" type="number" min="0" max="100" step="0.1" value="${clampDiscount(l.discountPercent)}" aria-label="Скидка на этот товар, процентов"></label><b class="line-total">${p ? moneyPairHtml(invoiceLineAmount(price(p), l.qty, l.discountPercent)) : "—"}</b><button class="btn small danger" type="button" data-act="remove-line" data-i="${i}">×</button></div>`;
       })
       .join("");
   }
@@ -874,7 +988,7 @@
             .map((x, i) => {
               const p = x.p,
                 unit = x.unit ?? price(p);
-              return `<tr><td>${i + 1}</td><td>${esc(p.name)}</td><td>${esc(p.article)}</td><td>${x.qty}</td><td>${moneyPairHtml(unit, fxRate)}</td><td>${x.discount || 0}%</td><td>${moneyPairHtml(x.total ?? invoiceLineAmount(unit, x.qty, x.discount), fxRate)}</td></tr>`;
+              return `<tr><td>${i + 1}</td><td>${esc(p.name)}${p.size ? `<span class="subline">Размер ${esc(p.size)}</span>` : ""}</td><td>${esc(p.article)}</td><td>${x.qty}</td><td>${moneyPairHtml(unit, fxRate)}</td><td>${x.discount || 0}%</td><td>${moneyPairHtml(x.total ?? invoiceLineAmount(unit, x.qty, x.discount), fxRate)}</td></tr>`;
             })
             .join("")
         : `<tr><td colspan="7" style="text-align:center;color:#899493;padding:28px">Добавьте товары, чтобы сформировать накладную</td></tr>`
@@ -908,7 +1022,7 @@
         "Накладные",
         "Выберите клиента и товары. Предпросмотр обновляется автоматически.",
       ) +
-      `<div class="split"><div class="card panel no-print"><div class="panel-head"><div><h2>Данные накладной</h2><p>Сохранение спишет товар со склада</p></div></div><form id="inv-form"><div class="form-grid"><div class="field span2"><label>Найти клиента</label><input class="input" id="inv-client-search" placeholder="Введите имя или фамилию"></div><div class="field span2"><label>Клиент</label><select id="inv-client" name="customerId" required>${clientOpts()}</select></div><div class="field"><label>Дата и время</label><input class="input" id="inv-date" name="date" type="datetime-local" value="${now()}"></div><div class="field"><label>Номер</label><input class="input" id="inv-number" name="number" value="НК-${String(db.invoices.length + 1).padStart(4, "0")}"></div><div class="field span2"><label>Поиск товара по названию или артикулу</label><input class="input" id="inv-search" placeholder="Начните вводить товар"></div></div><div class="divider"></div><div class="row-between"><b style="font-size:12px">Товары в накладной</b><span class="small-text">Можно оформить предзаказ в минус</span></div><div id="invoice-lines" class="top-gap">${invoiceLineHtml()}</div><div class="line-add top-gap"><div class="field"><label>Добавить товар</label><select id="line-product">${productOpts()}</select></div><div class="field"><label>Количество</label><input class="input" id="line-qty" type="number" min="1" value="1"></div><button type="button" class="btn soft" data-act="add-line">＋ Строка</button></div><div class="divider"></div><div class="field"><label>Уже оплачено, ₴</label><input class="input" id="inv-paid" name="paid" type="number" min="0" step=".01" value="0"></div><div class="notice top-gap">Остаток суммы автоматически попадёт в баланс клиента.</div><div class="form-actions"><button class="btn primary">Сохранить накладную</button></div></form></div><div class="sticky"><div class="row-between no-print" style="margin-bottom:9px"><span class="small-text">Электронная накладная · предпросмотр</span><button class="btn small" data-act="print-current">Печать</button></div><div id="printable" class="invoice-paper">${preview()}</div></div></div><div class="card panel top-gap no-print"><div class="panel-head"><div><h2>Сохранённые накладные</h2><p>Последние документы</p></div></div>${invoiceHistory()}</div>`;
+      `<div class="split"><div class="card panel no-print"><div class="panel-head"><div><h2>Данные накладной</h2><p>Сохранение спишет товар со склада</p></div></div><form id="inv-form"><div class="form-grid"><div class="field span2"><label>Найти клиента</label><input class="input" id="inv-client-search" placeholder="Введите имя или фамилию"></div><div class="field span2"><label>Клиент</label><select id="inv-client" name="customerId" required>${clientOpts()}</select></div><div class="field"><label>Дата и время</label><input class="input" id="inv-date" name="date" type="datetime-local" value="${now()}"></div><div class="field"><label>Номер</label><input class="input" id="inv-number" name="number" value="НК-${String(db.invoices.length + 1).padStart(4, "0")}"></div><div class="field span2"><label>Поиск товара по названию или артикулу</label><input class="input" id="inv-search" placeholder="Название, артикул или размер"></div></div><div class="divider"></div><div class="row-between"><b style="font-size:12px">Товары в накладной</b><span class="small-text">Можно оформить предзаказ в минус</span></div><div id="invoice-lines" class="top-gap">${invoiceLineHtml()}</div><div class="line-add top-gap"><div class="field"><label>Добавить товар</label><select id="line-product">${productOpts()}</select></div><div class="field"><label>Количество</label><input class="input" id="line-qty" type="number" min="1" value="1"></div><button type="button" class="btn soft" data-act="add-line">＋ Строка</button></div><div class="divider"></div><div class="field"><label>Уже оплачено, ₴</label><input class="input" id="inv-paid" name="paid" type="number" min="0" step=".01" value="0"></div><div class="notice top-gap">Остаток суммы автоматически попадёт в баланс клиента.</div><div class="form-actions"><button class="btn primary">Сохранить накладную</button></div></form></div><div class="sticky"><div class="row-between no-print" style="margin-bottom:9px"><span class="small-text">Электронная накладная · предпросмотр</span><button class="btn small" data-act="print-current">Печать</button></div><div id="printable" class="invoice-paper">${preview()}</div></div></div><div class="card panel top-gap no-print"><div class="panel-head"><div><h2>Сохранённые накладные</h2><p>Последние документы</p></div></div>${invoiceHistory()}</div>`;
     $("#inv-client")?.closest(".field")?.insertAdjacentHTML(
       "afterend",
       `<div class="field span2"><label>Способ отправки</label><select id="inv-delivery" name="deliveryMethod"><option value="">Не указан</option>${deliveryMethodOptions()}</select></div>`,
@@ -932,6 +1046,7 @@
                   productId: p.id,
                   name: p.name,
                   article: p.article,
+                  size: p.size || "",
                   qty: n(l.qty),
                   unitPrice: price(p),
                   discountPercent: clampDiscount(l.discountPercent),
@@ -983,7 +1098,7 @@
     $("#inv-search").oninput = (e) => {
       const q = e.target.value.toLowerCase(),
         p = db.products.find((x) => !x.archived &&
-          (x.name + " " + x.article).toLowerCase().includes(q),
+          (x.name + " " + x.article + " " + (x.size || "")).toLowerCase().includes(q),
         );
       if (p) $("#line-product").value = p.id;
     };
@@ -1172,6 +1287,7 @@
       if (!product) return;
       modal(productEditForm(product), "modal-wide");
       const form = $("#edit-product");
+      setupProductPriceForm(form, "#edit-price-hint");
       form.querySelector('[name="image"]').onchange = (event) => {
         const file = event.target.files[0],
           preview = $("#edit-image-preview");
@@ -1188,11 +1304,17 @@
         const f = new FormData(form),
           name = String(f.get("name")).trim(),
           article = String(f.get("article")).trim(),
-          cost = n(f.get("cost")),
+          priceInput = productCostFromForm(form),
+          cost = priceInput.cost,
           currency = String(f.get("currency")),
           fx = n(f.get("fx")) || n(db.fx),
           markup = n(f.get("markup")),
           brand = String(f.get("brand") || "").trim();
+        if (
+          priceInput.mode === "ready" &&
+          (priceInput.discountPercent < 0 || priceInput.discountPercent >= 100)
+        )
+          return toast("Скидка должна быть от 0% и меньше 100%");
         let image = product.image || "";
         try {
           const file = f.get("image");
@@ -1206,6 +1328,7 @@
           article,
           category: String(f.get("category") || ""),
           brand,
+          size: String(f.get("size") || ""),
           cost,
           currency,
           fx,
@@ -1309,6 +1432,31 @@
         toast(a === "brand" ? "Бренд добавлен" : "Категория добавлена");
         render();
       }
+      return;
+    }
+    if (a === "size") {
+      const value = prompt("Добавить размер (например, 160×200 или L)");
+      if (value === null) return;
+      const size = value.trim();
+      if (!size) return toast("Введите размер");
+      if (db.sizes.some((item) => item.toLocaleLowerCase() === size.toLocaleLowerCase()))
+        return toast("Такой размер уже есть");
+      db.sizes.push(size);
+      save();
+      refreshSizeControls();
+      document.querySelectorAll('select[name="size"]').forEach((select) => {
+        if (!select.value) select.value = size;
+      });
+      toast("Размер добавлен и выбран");
+      return;
+    }
+    if (a === "delete-size") {
+      const size = b.dataset.id;
+      if (!confirm(`Удалить размер «${size}» из списка?`)) return;
+      db.sizes = db.sizes.filter((item) => item !== size);
+      save();
+      refreshSizeControls();
+      toast("Размер удалён из списка");
       return;
     }
     if (a === "delivery-method") {
