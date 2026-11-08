@@ -49,6 +49,7 @@
   if (!Array.isArray(db.sizes)) db.sizes = [];
   let page = "director",
     clientId = "",
+    activeCustomerInvoiceId = "",
     supplierId = "",
     draft = [{ productId: "", qty: 1 }],
     accountingPeriod = "month",
@@ -116,10 +117,9 @@
       Math.round(x / Math.max(1, n(db.round) || 5)) *
       Math.max(1, n(db.round) || 5);
   const price = (p) =>
-    n(p.priceUAH) ||
     round(
       n(p.cost) *
-        (p.currency === "USD" ? n(p.fx) : 1) *
+        (p.currency === "USD" ? (n(db.fx) || 1) : 1) *
         (1 + n(p.markup) / 100),
     );
   const clampDiscount = (value) => Math.min(100, Math.max(0, n(value)));
@@ -158,13 +158,15 @@
     db.accounting
       .filter((x) => x.stockProductId === p)
       .reduce((s, x) => s + x.delta, 0);
-  const debt = (c) =>
-    db.invoices
-      .filter((x) => x.customerId === c)
-      .reduce((s, x) => s + x.total - x.paid, 0) -
-    db.customerPayments
-      .filter((x) => x.customerId === c)
-      .reduce((s, x) => s + x.amount, 0);
+  const debt = (c) => {
+    const invoiceBalance = db.invoices
+        .filter((x) => x.customerId === c)
+        .reduce((sum, x) => sum + Math.max(0, n(x.total) - n(x.paid)), 0),
+      unlinkedPayments = db.customerPayments
+        .filter((x) => x.customerId === c && !x.invoiceId)
+        .reduce((sum, x) => sum + n(x.amount), 0);
+    return Math.max(0, invoiceBalance - unlinkedPayments);
+  };
   const payable = (s) =>
     db.supplierLedger
       .filter((x) => x.supplierId === s)
@@ -463,7 +465,7 @@
       ? `<table><thead><tr><th>Товар</th><th>Категория / бренд</th><th>Закупка</th><th>Цена продажи</th><th>Остаток</th><th>Действия</th></tr></thead><tbody>${items
           .map(
             (p) =>
-              `<tr class="${p.archived ? "archived-row" : ""}"><td><div class="product-cell">${p.image ? `<img class="product-thumb" src="${p.image}" alt="">` : '<div class="product-placeholder">▦</div>'}<div><b>${esc(p.name)}</b>${p.archived ? '<span class="badge muted-badge">В архиве</span>' : ""}<span class="subline">Артикул ${esc(p.article)}</span>${p.size ? `<span class="subline">Размер ${esc(p.size)}</span>` : ""}</div></div></td><td>${esc(p.category || "Без категории")}<span class="subline">${esc(p.brand || "Без бренда")}</span></td><td>${cash(p.cost, p.currency)}<span class="subline">Наценка ${n(p.markup)}%</span></td><td><b>${cash(price(p))}</b><span class="subline">${cash(price(p) / n(p.fx || db.fx), "USD")}</span></td><td><span class="badge ${stock(p.id) <= 5 ? "warn" : ""}">${stock(p.id)} шт.</span></td><td><div class="table-actions">${p.archived ? `<button class="btn small" data-act="restore-product" data-id="${p.id}">Вернуть</button>` : `<button class="btn small" data-act="edit-product" data-id="${p.id}">Изменить</button><button class="btn small danger" data-act="delete-product" data-id="${p.id}">Удалить</button>`}</div></td></tr>`,
+              `<tr class="${p.archived ? "archived-row" : ""}"><td><div class="product-cell">${p.image ? `<img class="product-thumb" src="${p.image}" alt="">` : '<div class="product-placeholder">▦</div>'}<div><b>${esc(p.name)}</b>${p.archived ? '<span class="badge muted-badge">В архиве</span>' : ""}<span class="subline">Артикул ${esc(p.article)}</span>${p.size ? `<span class="subline">Размер ${esc(p.size)}</span>` : ""}</div></div></td><td>${esc(p.category || "Без категории")}<span class="subline">${esc(p.brand || "Без бренда")}</span></td><td>${cash(p.cost, p.currency)}<span class="subline">Наценка ${n(p.markup)}%</span></td><td><b>${cash(price(p))}</b><span class="subline">${cash(price(p) / (n(db.fx) || 1), "USD")}</span></td><td><span class="badge ${stock(p.id) <= 5 ? "warn" : ""}">${stock(p.id)} шт.</span></td><td><div class="table-actions">${p.archived ? `<button class="btn small" data-act="restore-product" data-id="${p.id}">Вернуть</button>` : `<button class="btn small" data-act="edit-product" data-id="${p.id}">Изменить</button><button class="btn small danger" data-act="delete-product" data-id="${p.id}">Удалить</button>`}</div></td></tr>`,
           )
           .join("")}</tbody></table>`
       : empty("Добавьте товар в каталог или измените поиск.", "▦");
@@ -481,7 +483,7 @@
           `<option value="${esc(brand)}" ${p.brand === brand ? "selected" : ""}>${esc(brand)}</option>`,
       )
       .join("");
-    return `<h2>Изменить товар</h2><p>Обновите карточку товара. Уже сохранённые накладные и поставки останутся в истории.</p><form id="edit-product" data-id="${p.id}"><div class="form-grid three"><div class="field"><label>Название</label><input class="input" name="name" value="${esc(p.name)}" required></div><div class="field"><label>Артикул</label><input class="input" name="article" value="${esc(p.article)}" required></div><div class="field"><label>Категория</label><select name="category"><option value="" ${p.category ? "" : "selected"}>Без категории</option>${categoryOptions}${p.category && !db.categories.includes(p.category) ? `<option value="${esc(p.category)}" selected>${esc(p.category)}</option>` : ""}</select></div><div class="field"><label data-cost-label>Закупочная цена</label><input class="input" name="cost" type="number" min="0" step=".01" value="${n(p.cost)}" required></div><div class="field"><label>Ввод цены</label><select name="costMode"><option value="purchase">Закупочная</option><option value="ready">Готовая до скидки</option></select></div><div class="field" hidden><label>Вычесть скидку, %</label><input class="input" name="costDiscountPercent" type="number" min="0" max="99.9" step=".1" value="17"></div><div class="field"><label>Валюта</label><select name="currency"><option value="USD" ${p.currency === "USD" ? "selected" : ""}>USD</option><option value="UAH" ${p.currency === "UAH" ? "selected" : ""}>UAH</option></select></div><div class="field"><label>Курс доллара</label><input class="input" name="fx" type="number" min=".01" step=".01" value="${n(p.fx) || n(db.fx)}"></div><div class="field"><label>Наценка, %</label><input class="input" name="markup" type="number" step="1" value="${n(p.markup)}"></div><div class="field"><label>Бренд</label><select name="brand"><option value="">Без бренда</option>${brandOptions}${p.brand && !db.brands.includes(p.brand) ? `<option value="${esc(p.brand)}" selected>${esc(p.brand)}</option>` : ""}</select></div><div class="field"><label>Размер</label><div class="row-between"><select name="size">${sizeOptions(p.size)}</select><button class="btn small" type="button" data-act="size">＋</button></div></div><div class="field span3"><label>Заменить фото (необязательно)</label><input class="input" name="image" type="file" accept="image/*"><small>Если новое фото не выбирать, останется текущее.</small><img id="edit-image-preview" class="upload-preview" src="${p.image || ""}" ${p.image ? "" : "hidden"} alt="Предпросмотр товара"></div></div><div class="notice span3" id="edit-price-hint">Изменение закупочной цены пересчитает цену продажи.</div><div class="form-actions"><button type="button" class="btn" data-act="close">Отмена</button><button class="btn primary">Сохранить изменения</button></div></form>`;
+    return `<h2>Изменить товар</h2><p>Обновите карточку товара. Уже сохранённые накладные и поставки останутся в истории.</p><form id="edit-product" data-id="${p.id}"><div class="form-grid three"><div class="field"><label>Название</label><input class="input" name="name" value="${esc(p.name)}" required></div><div class="field"><label>Артикул</label><input class="input" name="article" value="${esc(p.article)}" required></div><div class="field"><label>Категория</label><select name="category"><option value="" ${p.category ? "" : "selected"}>Без категории</option>${categoryOptions}${p.category && !db.categories.includes(p.category) ? `<option value="${esc(p.category)}" selected>${esc(p.category)}</option>` : ""}</select></div><div class="field"><label data-cost-label>Закупочная цена</label><input class="input" name="cost" type="number" min="0" step=".01" value="${n(p.cost)}" required></div><div class="field"><label>Ввод цены</label><select name="costMode"><option value="purchase">Закупочная</option><option value="ready">Готовая до скидки</option></select></div><div class="field" hidden><label>Вычесть скидку, %</label><input class="input" name="costDiscountPercent" type="number" min="0" max="99.9" step=".1" value="17"></div><div class="field"><label>Валюта</label><select name="currency"><option value="USD" ${p.currency === "USD" ? "selected" : ""}>USD</option><option value="UAH" ${p.currency === "UAH" ? "selected" : ""}>UAH</option></select></div><div class="field"><label>Курс доллара</label><input class="input" name="fx" type="number" min=".01" step=".01" value="${n(db.fx)}"></div><div class="field"><label>Наценка, %</label><input class="input" name="markup" type="number" step="1" value="${n(p.markup)}"></div><div class="field"><label>Бренд</label><select name="brand"><option value="">Без бренда</option>${brandOptions}${p.brand && !db.brands.includes(p.brand) ? `<option value="${esc(p.brand)}" selected>${esc(p.brand)}</option>` : ""}</select></div><div class="field"><label>Размер</label><div class="row-between"><select name="size">${sizeOptions(p.size)}</select><button class="btn small" type="button" data-act="size">＋</button></div></div><div class="field span3"><label>Заменить фото (необязательно)</label><input class="input" name="image" type="file" accept="image/*"><small>Если новое фото не выбирать, останется текущее.</small><img id="edit-image-preview" class="upload-preview" src="${p.image || ""}" ${p.image ? "" : "hidden"} alt="Предпросмотр товара"></div></div><div class="notice span3" id="edit-price-hint">Изменение закупочной цены пересчитает цену продажи.</div><div class="form-actions"><button type="button" class="btn" data-act="close">Отмена</button><button class="btn primary">Сохранить изменения</button></div></form>`;
   }
   function productCostFromForm(form) {
     const data = new FormData(form),
@@ -839,21 +841,60 @@
           .join("")
       : empty("Клиентов пока нет.", "♙");
   }
-  function customerCard(c) {
+  function customerCardWithInvoices(c) {
     const inv = db.invoices
         .filter((x) => x.customerId === c.id)
         .sort((a, b) => new Date(b.date) - new Date(a.date)),
-      pay = db.customerPayments
+      payments = db.customerPayments
         .filter((x) => x.customerId === c.id)
         .sort((a, b) => new Date(b.date) - new Date(a.date)),
+      legacyPayments = payments.filter((x) => !x.invoiceId),
       notes = db.customerNotes
         .filter((x) => x.customerId === c.id)
         .sort((a, b) => new Date(b.date) - new Date(a.date)),
-      ordered = inv.reduce((s, x) => s + x.total, 0),
+      ordered = inv.reduce((sum, x) => sum + n(x.total), 0),
       paid =
-        inv.reduce((s, x) => s + x.paid, 0) +
-        pay.reduce((s, x) => s + x.amount, 0);
-    return `<div class="profile-head"><div><h2>${esc(c.name)}</h2><p>${esc(c.phone || "Телефон не указан")} · ${esc(c.address || "Адрес не указан")}</p><button class="btn small top-gap" data-act="edit-client" data-id="${c.id}">Изменить данные</button></div><div class="balance-card"><span>Клиент должен</span><strong>${cash(debt(c.id))}</strong></div></div><div class="grid stats" style="grid-template-columns:repeat(2,1fr)">${stat("Заказано", cash(ordered), "Сумма накладных", "▧")}${stat("Оплачено", cash(paid), "Учтённые оплаты", "✓")}</div><div class="divider"></div><b>Записать оплату</b><form id="client-payment" class="inline-form top-gap"><div class="field"><label>Сумма, ₴</label><input class="input" name="amount" type="number" min=".01" step=".01" required></div><div class="field"><label>Дата</label><input class="input" name="date" type="datetime-local" value="${now()}"></div><button class="btn primary">Записать</button></form><div class="small-text top-gap">Оплата уменьшает долг. Доход по накладной уже учтён в бухгалтерии.</div><div class="divider"></div><h2 style="font-size:14px">Заметки и история общения</h2><div class="client-chat">${notes.length ? notes.map((x) => `<div class="chat-entry"><div>${esc(x.text)}</div><time>${dt(x.date)}</time></div>`).join("") : empty("Заметок пока нет. Добавьте договорённости или важные детали.", "✎")}</div><form id="client-note" class="top-gap"><div class="field"><label>Новая заметка</label><textarea name="text" required placeholder="Что клиент заказал, что вы ему сообщили, о чём договорились…"></textarea></div><div class="form-actions"><button class="btn soft">＋ Добавить заметку</button></div></form><div class="divider"></div><h2 style="font-size:14px">Накладные и оплаты</h2>${inv.length || pay.length ? `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Запись</th><th>Сумма</th><th>Оплачено</th><th>Остаток</th></tr></thead><tbody>${inv.map((x) => `<tr><td>${dt(x.date)}</td><td>Накладная ${esc(x.number)}</td><td>${cash(x.total)}</td><td>${cash(x.paid)}</td><td>${cash(x.total - x.paid)}</td></tr>`).join("")}${pay.map((x) => `<tr><td>${dt(x.date)}</td><td>Оплата клиента</td><td class="amount-positive">− ${cash(x.amount)}</td><td>—</td><td>—</td></tr>`).join("")}</tbody></table></div>` : empty("Истории заказов пока нет.", "▧")}`;
+        inv.reduce((sum, x) => sum + n(x.paid), 0) +
+        legacyPayments.reduce((sum, x) => sum + n(x.amount), 0),
+      openInvoices = inv.filter(
+        (invoice) => n(invoice.total) > n(invoice.paid),
+      ),
+      openInvoiceOptions = openInvoices
+        .map(
+          (invoice) =>
+            `<option value="${esc(invoice.id)}">Накладная № ${esc(invoice.number)} · остаток ${cash(n(invoice.total) - n(invoice.paid))}</option>`,
+        )
+        .join(""),
+      invoiceCards = inv.length
+        ? inv
+            .map((invoice) => {
+              const remaining = Math.max(
+                  0,
+                  n(invoice.total) - n(invoice.paid),
+                ),
+                selected = activeCustomerInvoiceId === invoice.id,
+                invoicePayments = payments.filter(
+                  (payment) => payment.invoiceId === invoice.id,
+                );
+              return `<article class="client-invoice-card ${selected ? "selected" : ""}"><label class="client-invoice-heading"><input class="client-invoice-select" type="checkbox" data-id="${esc(invoice.id)}" ${selected ? "checked" : ""}><span class="client-invoice-name"><b>Накладная № ${esc(invoice.number)}</b><small>${dt(invoice.date)}</small></span><span class="client-invoice-amount"><small>Сумма</small><b>${cash(invoice.total)}</b></span><span class="client-invoice-amount"><small>Оплачено</small><b>${cash(invoice.paid)}</b></span><span class="client-invoice-amount"><small>Остаток</small><b>${cash(remaining)}</b></span></label>${selected ? `<div class="client-invoice-content"><div class="invoice-paper client-invoice-preview" data-invoice-id="${esc(invoice.id)}">${preview(invoice)}</div>${remaining > 0 ? `<form class="invoice-payment-form" data-invoice-id="${esc(invoice.id)}"><div class="form-grid three"><div class="field"><label>Сколько оплатил, ₴</label><input class="input" name="amount" type="number" min=".01" max="${remaining.toFixed(2)}" step=".01" required></div><div class="field"><label>Дата оплаты</label><input class="input" name="date" type="datetime-local" value="${now()}"></div><div class="notice">Долг по этой накладной: <b>${cash(remaining)}</b></div></div><div class="form-actions"><button class="btn primary">Записать оплату по накладной</button></div></form>` : '<div class="notice">Накладная оплачена полностью.</div>'}${invoicePayments.length ? `<div class="invoice-payment-history"><b>Платежи по этой накладной</b>${invoicePayments.map((payment) => `<div class="row-between"><span>${dt(payment.date)}</span><b>− ${cash(payment.amount)}</b></div>`).join("")}</div>` : ""}</div>` : ""}</article>`;
+            })
+            .join("")
+        : empty("У клиента пока нет накладных.", "▧"),
+      unlinkedPayments = legacyPayments.length
+        ? `<div class="notice top-gap">Старые оплаты учитываются в общем долге. Здесь можно вручную привязать их к нужной накладной, чтобы обновить её оплаченный остаток.</div><div class="table-wrap top-gap"><table><thead><tr><th>Дата</th><th>Старая оплата</th><th>Накладная</th><th>Сумма для привязки</th><th></th></tr></thead><tbody>${legacyPayments
+            .map((payment) => {
+              const firstInvoice = openInvoices[0],
+                maxLink = firstInvoice
+                  ? Math.min(
+                      n(payment.amount),
+                      n(firstInvoice.total) - n(firstInvoice.paid),
+                    )
+                  : 0;
+              return `<tr><td>${dt(payment.date)}</td><td>Без накладной<br><b>${cash(payment.amount)}</b></td><td><select class="input legacy-payment-invoice" data-payment-id="${esc(payment.id)}" ${openInvoices.length ? "" : "disabled"}>${openInvoices.length ? openInvoiceOptions : '<option value="">Нет накладных с долгом</option>'}</select></td><td><input class="input legacy-link-amount" data-payment-id="${esc(payment.id)}" type="number" min=".01" max="${maxLink.toFixed(2)}" step=".01" value="${maxLink.toFixed(2)}" ${maxLink > 0 ? "" : "disabled"}></td><td><button class="btn small" type="button" data-act="link-legacy-payment" data-id="${esc(payment.id)}" ${maxLink > 0 ? "" : "disabled"}>Привязать</button></td></tr>`;
+            })
+            .join("")}</tbody></table></div>`
+        : "";
+    return `<div class="profile-head"><div><h2>${esc(c.name)}</h2><p>${esc(c.phone || "Телефон не указан")} · ${esc(c.address || "Адрес не указан")}</p><button class="btn small top-gap" data-act="edit-client" data-id="${esc(c.id)}">Изменить данные</button></div><div class="balance-card"><span>Клиент должен</span><strong>${cash(debt(c.id))}</strong></div></div><div class="grid stats" style="grid-template-columns:repeat(2,1fr)">${stat("Заказано", cash(ordered), "Сумма накладных", "▧")}${stat("Оплачено", cash(paid), "Сохранённые платежи", "✓")}</div><div class="divider"></div><h2 class="section-title">Накладные клиента</h2><p class="small-text">Отметьте накладную, чтобы открыть её, посмотреть состав и записать оплату именно по ней.</p><div class="client-invoice-list">${invoiceCards}</div>${unlinkedPayments}<div class="divider"></div><h2 class="section-title">Заметки и история общения</h2><div class="client-chat">${notes.length ? notes.map((x) => `<div class="chat-entry"><div>${esc(x.text)}</div><time>${dt(x.date)}</time></div>`).join("") : empty("Заметок пока нет. Добавьте договорённости или важные детали.", "✎")}</div><form id="client-note" class="top-gap"><div class="field"><label>Новая заметка</label><textarea name="text" required placeholder="Что клиент заказал, что вы ему сообщили, о чём договорились…"></textarea></div><div class="form-actions"><button class="btn soft">＋ Добавить заметку</button></div></form>`;
   }
   function customers() {
     if (clientId && !find(db.customers, clientId)) clientId = "";
@@ -864,7 +905,68 @@
         "Клиентская база",
         "Карточки, история общения, заказы и остаток долга.",
       ) +
-      `<div class="client-layout"><div class="stack"><details class="details"><summary>＋ Добавить клиента</summary><div class="details-body"><form id="client-form"><div class="form-grid"><div class="field"><label>Имя</label><input class="input" name="first" required></div><div class="field"><label>Фамилия</label><input class="input" name="last" required></div><div class="field"><label>Телефон</label><input class="input" name="phone" type="tel"></div><div class="field span2"><label>Адрес</label><input class="input" name="address"></div></div><div class="form-actions"><button class="btn primary">Создать карточку</button></div></form></div></details><div class="card panel"><div class="panel-head"><h2>Клиенты · ${db.customers.length}</h2></div><div class="search"><input class="input" id="client-search" placeholder="Имя или телефон"></div><div class="record-list top-gap" id="client-list">${customerRows(db.customers)}</div></div></div><div class="card panel" id="client-card">${c ? customerCard(c) : empty("Выберите клиента или создайте карточку.", "♙")}</div></div>`;
+      `<div class="client-layout"><div class="stack"><details class="details"><summary>＋ Добавить клиента</summary><div class="details-body"><form id="client-form"><div class="form-grid"><div class="field"><label>Имя</label><input class="input" name="first" required></div><div class="field"><label>Фамилия</label><input class="input" name="last" required></div><div class="field"><label>Телефон</label><input class="input" name="phone" type="tel"></div><div class="field span2"><label>Адрес</label><input class="input" name="address"></div></div><div class="form-actions"><button class="btn primary">Создать карточку</button></div></form></div></details><div class="card panel"><div class="panel-head"><h2>Клиенты · ${db.customers.length}</h2></div><div class="search"><input class="input" id="client-search" placeholder="Имя или телефон"></div><div class="record-list top-gap" id="client-list">${customerRows(db.customers)}</div></div></div><div class="card panel" id="client-card">${c ? customerCardWithInvoices(c) : empty("Выберите клиента или создайте карточку.", "♙")}</div></div>`;
+    view.querySelectorAll(".client-invoice-preview").forEach((paper) => {
+      const invoice = find(db.invoices, paper.dataset.invoiceId);
+      if (invoice)
+        appendInvoiceDetails(
+          paper,
+          invoice.fxRate,
+          invoice.deliveryMethod || "",
+        );
+    });
+    view.querySelectorAll(".client-invoice-select").forEach((checkbox) => {
+      checkbox.onchange = () => {
+        activeCustomerInvoiceId = checkbox.checked ? checkbox.dataset.id : "";
+        customers();
+      };
+    });
+    view.querySelectorAll(".invoice-payment-form").forEach((form) => {
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        const invoice = find(db.invoices, form.dataset.invoiceId),
+          amount = n(new FormData(form).get("amount")),
+          remaining = invoice
+            ? Math.max(0, n(invoice.total) - n(invoice.paid))
+            : 0;
+        if (!invoice || invoice.customerId !== clientId)
+          return toast("Накладная не найдена");
+        if (amount <= 0 || amount > remaining + 0.001)
+          return toast("Оплата не должна превышать остаток по накладной");
+        const date = new Date(new FormData(form).get("date") || now()).toISOString();
+        invoice.paid = Math.round((n(invoice.paid) + amount) * 100) / 100;
+        db.customerPayments.unshift({
+          id: id(),
+          customerId: clientId,
+          invoiceId: invoice.id,
+          amount,
+          date,
+        });
+        activeCustomerInvoiceId = invoice.id;
+        save();
+        toast(`Оплата по накладной ${invoice.number} записана`);
+        customers();
+      };
+    });
+    view.querySelectorAll(".legacy-payment-invoice").forEach((select) => {
+      select.onchange = () => {
+        const row = select.closest("tr"),
+          payment = find(db.customerPayments, select.dataset.paymentId),
+          invoice = find(db.invoices, select.value),
+          amountInput = row?.querySelector(".legacy-link-amount");
+        if (!payment || !invoice || !amountInput) return;
+        const limit = Math.min(
+          n(payment.amount),
+          Math.max(0, n(invoice.total) - n(invoice.paid)),
+        );
+        amountInput.max = limit.toFixed(2);
+        if (n(amountInput.value) > limit)
+          amountInput.value = limit ? limit.toFixed(2) : "";
+        row.querySelector('[data-act="link-legacy-payment"]').disabled =
+          limit <= 0;
+        amountInput.disabled = limit <= 0;
+      };
+    });
     $("#client-form").onsubmit = (e) => {
       e.preventDefault();
       const f = new FormData(e.currentTarget),
@@ -876,6 +978,7 @@
         };
       db.customers.unshift(x);
       clientId = x.id;
+      activeCustomerInvoiceId = "";
       save();
       toast("Карточка клиента создана");
       customers();
@@ -888,23 +991,6 @@
             .includes(e.target.value.toLowerCase()),
         ),
       ));
-    const pf = $("#client-payment");
-    if (pf)
-      pf.onsubmit = (e) => {
-        e.preventDefault();
-        const f = new FormData(pf),
-          amount = n(f.get("amount"));
-        if (amount <= 0) return;
-        db.customerPayments.unshift({
-          id: id(),
-          customerId: clientId,
-          amount,
-          date: new Date(f.get("date") || now()).toISOString(),
-        });
-        save();
-        toast("Оплата записана");
-        customers();
-      };
     const nf = $("#client-note");
     if (nf)
       nf.onsubmit = (e) => {
@@ -1080,6 +1166,14 @@
         paid,
         fxRate: n(db.fx) || 1,
       });
+      if (paid > 0)
+        db.customerPayments.unshift({
+          id: id(),
+          customerId: c.id,
+          invoiceId,
+          amount: paid,
+          date,
+        });
       db.accounting.unshift({
         id: id(),
         type: "income",
@@ -1272,6 +1366,44 @@
     const b = e.target.closest("[data-act]");
     if (!b) return;
     const a = b.dataset.act;
+    if (a === "link-legacy-payment") {
+      const row = b.closest("tr"),
+        payment = find(db.customerPayments, b.dataset.id),
+        invoice = find(
+          db.invoices,
+          row?.querySelector(".legacy-payment-invoice")?.value,
+        ),
+        amount = n(row?.querySelector(".legacy-link-amount")?.value),
+        remaining = invoice
+          ? Math.max(0, n(invoice.total) - n(invoice.paid))
+          : 0;
+      if (!payment || payment.invoiceId || !invoice || invoice.customerId !== clientId)
+        return toast("Выберите накладную этого клиента");
+      if (
+        amount <= 0 ||
+        amount > n(payment.amount) + 0.001 ||
+        amount > remaining + 0.001
+      )
+        return toast("Сумма привязки превышает оплату или остаток накладной");
+      invoice.paid = Math.round((n(invoice.paid) + amount) * 100) / 100;
+      if (amount >= n(payment.amount) - 0.001) {
+        payment.invoiceId = invoice.id;
+      } else {
+        payment.amount = Math.round((n(payment.amount) - amount) * 100) / 100;
+        db.customerPayments.unshift({
+          id: id(),
+          customerId: clientId,
+          invoiceId: invoice.id,
+          amount,
+          date: payment.date,
+        });
+      }
+      activeCustomerInvoiceId = invoice.id;
+      save();
+      toast(`Оплата привязана к накладной ${invoice.number}`);
+      customers();
+      return;
+    }
     if (a === "delete-note") {
       const item = find(db.notebook, b.dataset.id);
       if (item && confirm("Удалить заметку и прикреплённые фото?")) {
@@ -1500,6 +1632,7 @@
     }
     if (a === "client") {
       clientId = b.dataset.id;
+      activeCustomerInvoiceId = "";
       customers();
       return;
     }
