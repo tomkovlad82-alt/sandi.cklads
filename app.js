@@ -54,7 +54,8 @@
     draft = [{ productId: "", qty: 1 }],
     accountingPeriod = "month",
     showArchivedProducts = false,
-    showArchivedSuppliers = false;
+    showArchivedSuppliers = false,
+    showArchivedInvoices = false;
   const $ = (s) => document.querySelector(s),
     view = $("#view");
   const save = () => {
@@ -845,6 +846,7 @@
     const inv = db.invoices
         .filter((x) => x.customerId === c.id)
         .sort((a, b) => new Date(b.date) - new Date(a.date)),
+      displayInvoices = inv.filter((invoice) => showArchivedInvoices ? invoice.archived : !invoice.archived),
       payments = db.customerPayments
         .filter((x) => x.customerId === c.id)
         .sort((a, b) => new Date(b.date) - new Date(a.date)),
@@ -865,21 +867,25 @@
             `<option value="${esc(invoice.id)}">Накладная № ${esc(invoice.number)} · остаток ${cash(n(invoice.total) - n(invoice.paid))}</option>`,
         )
         .join(""),
-      invoiceCards = inv.length
-        ? inv
+      invoiceCards = displayInvoices.length
+        ? displayInvoices
             .map((invoice) => {
               const remaining = Math.max(
                   0,
                   n(invoice.total) - n(invoice.paid),
                 ),
+                paidPercent = n(invoice.total)
+                  ? Math.min(100, Math.round((n(invoice.paid) / n(invoice.total)) * 100))
+                  : 100,
+                isPaid = remaining <= 0.009,
                 selected = activeCustomerInvoiceId === invoice.id,
                 invoicePayments = payments.filter(
                   (payment) => payment.invoiceId === invoice.id,
                 );
-              return `<article class="client-invoice-card ${selected ? "selected" : ""}"><label class="client-invoice-heading"><input class="client-invoice-select" type="checkbox" data-id="${esc(invoice.id)}" ${selected ? "checked" : ""}><span class="client-invoice-name"><b>Накладная № ${esc(invoice.number)}</b><small>${dt(invoice.date)}</small></span><span class="client-invoice-amount"><small>Сумма</small><b>${cash(invoice.total)}</b></span><span class="client-invoice-amount"><small>Оплачено</small><b>${cash(invoice.paid)}</b></span><span class="client-invoice-amount"><small>Остаток</small><b>${cash(remaining)}</b></span></label>${selected ? `<div class="client-invoice-content"><div class="invoice-paper client-invoice-preview" data-invoice-id="${esc(invoice.id)}">${preview(invoice)}</div>${remaining > 0 ? `<form class="invoice-payment-form" data-invoice-id="${esc(invoice.id)}"><div class="form-grid three"><div class="field"><label>Сколько оплатил, ₴</label><input class="input" name="amount" type="number" min=".01" max="${remaining.toFixed(2)}" step=".01" required></div><div class="field"><label>Дата оплаты</label><input class="input" name="date" type="datetime-local" value="${now()}"></div><div class="notice">Долг по этой накладной: <b>${cash(remaining)}</b></div></div><div class="form-actions"><button class="btn primary">Записать оплату по накладной</button></div></form>` : '<div class="notice">Накладная оплачена полностью.</div>'}${invoicePayments.length ? `<div class="invoice-payment-history"><b>Платежи по этой накладной</b>${invoicePayments.map((payment) => `<div class="row-between"><span>${dt(payment.date)}</span><b>− ${cash(payment.amount)}</b></div>`).join("")}</div>` : ""}</div>` : ""}</article>`;
+              return `<article class="client-invoice-card ${selected ? "selected" : ""} ${isPaid ? "invoice-paid" : ""}"><label class="client-invoice-heading"><input class="client-invoice-select" type="checkbox" data-id="${esc(invoice.id)}" ${selected ? "checked" : ""}><span class="client-invoice-name"><b>${isPaid ? "✓ " : ""}Накладная № ${esc(invoice.number)}${invoice.archived ? ' <span class="badge muted-badge">В архиве</span>' : ""}</b><small>${dt(invoice.date)} · оплачено ${paidPercent}% · курс 1 $ = ${(n(invoice.fxRate) || n(db.fx) || 1).toFixed(2)} ₴</small></span><span class="client-invoice-amount"><small>Сумма</small><b>${cash(invoice.total)}</b><small>${cash(n(invoice.total) / (n(invoice.fxRate) || n(db.fx) || 1), "USD")}</small></span><span class="client-invoice-amount"><small>Оплачено</small><b>${cash(invoice.paid)}</b><small>${cash(n(invoice.paid) / (n(invoice.fxRate) || n(db.fx) || 1), "USD")}</small></span><span class="client-invoice-amount"><small>Остаток</small><b>${cash(remaining)}</b><small>${cash(remaining / (n(invoice.fxRate) || n(db.fx) || 1), "USD")}</small></span></label>${selected ? `<div class="client-invoice-content"><div class="invoice-payment-progress"><div class="row-between"><b>${isPaid ? "✓ Накладная оплачена полностью" : `Оплачено ${paidPercent}%`}</b><span>${cash(invoice.paid)} из ${cash(invoice.total)}</span></div><div class="progress-track"><span style="width:${paidPercent}%"></span></div></div><div class="invoice-paper client-invoice-preview" data-invoice-id="${esc(invoice.id)}">${preview(invoice)}</div>${remaining > 0 ? `<form class="invoice-payment-form" data-invoice-id="${esc(invoice.id)}"><div class="form-grid three"><div class="field"><label>Сколько оплатил, ₴</label><input class="input" name="amount" type="number" min=".01" max="${remaining.toFixed(2)}" step=".01" required></div><div class="field"><label>Дата оплаты</label><input class="input" name="date" type="datetime-local" value="${now()}"></div><div class="notice">Долг по этой накладной: <b>${cash(remaining)}</b></div></div><div class="form-actions"><button class="btn primary">Записать оплату по накладной</button></div></form>` : '<div class="notice">Накладная оплачена полностью.</div>'}${invoicePayments.length ? `<div class="invoice-payment-history"><b>Платежи по этой накладной</b>${invoicePayments.map((payment) => `<div class="row-between"><span>${dt(payment.date)}</span><b>− ${cash(payment.amount)}</b></div>`).join("")}</div>` : ""}<div class="invoice-card-actions">${invoice.archived ? `<button class="btn small" type="button" data-act="restore-invoice" data-id="${esc(invoice.id)}">Вернуть из архива</button>` : `<button class="btn small" type="button" data-act="archive-invoice" data-id="${esc(invoice.id)}">В архив</button>`}</div></div>` : ""}</article>`;
             })
             .join("")
-        : empty("У клиента пока нет накладных.", "▧"),
+        : empty(showArchivedInvoices ? "В архиве нет накладных." : inv.length ? "Активных накладных нет. Переключите показ архива." : "У клиента пока нет накладных.", "▧"),
       unlinkedPayments = legacyPayments.length
         ? `<div class="notice top-gap">Старые оплаты учитываются в общем долге. Здесь можно вручную привязать их к нужной накладной, чтобы обновить её оплаченный остаток.</div><div class="table-wrap top-gap"><table><thead><tr><th>Дата</th><th>Старая оплата</th><th>Накладная</th><th>Сумма для привязки</th><th></th></tr></thead><tbody>${legacyPayments
             .map((payment) => {
@@ -894,7 +900,11 @@
             })
             .join("")}</tbody></table></div>`
         : "";
-    return `<div class="profile-head"><div><h2>${esc(c.name)}</h2><p>${esc(c.phone || "Телефон не указан")} · ${esc(c.address || "Адрес не указан")}</p><button class="btn small top-gap" data-act="edit-client" data-id="${esc(c.id)}">Изменить данные</button></div><div class="balance-card"><span>Клиент должен</span><strong>${cash(debt(c.id))}</strong></div></div><div class="grid stats" style="grid-template-columns:repeat(2,1fr)">${stat("Заказано", cash(ordered), "Сумма накладных", "▧")}${stat("Оплачено", cash(paid), "Сохранённые платежи", "✓")}</div><div class="divider"></div><h2 class="section-title">Накладные клиента</h2><p class="small-text">Отметьте накладную, чтобы открыть её, посмотреть состав и записать оплату именно по ней.</p><div class="client-invoice-list">${invoiceCards}</div>${unlinkedPayments}<div class="divider"></div><h2 class="section-title">Заметки и история общения</h2><div class="client-chat">${notes.length ? notes.map((x) => `<div class="chat-entry"><div>${esc(x.text)}</div><time>${dt(x.date)}</time></div>`).join("") : empty("Заметок пока нет. Добавьте договорённости или важные детали.", "✎")}</div><form id="client-note" class="top-gap"><div class="field"><label>Новая заметка</label><textarea name="text" required placeholder="Что клиент заказал, что вы ему сообщили, о чём договорились…"></textarea></div><div class="form-actions"><button class="btn soft">＋ Добавить заметку</button></div></form>`;
+    const overallPaidPercent = ordered > 0 ? Math.min(100, Math.round((Math.max(0, ordered - debt(c.id)) / ordered) * 100)) : 0,
+      generalPayment = debt(c.id) > 0
+        ? `<div class="card panel top-gap"><h3 class="section-title">Оплата в общий долг</h3><p class="small-text">Платёж уменьшит общий долг клиента. Чтобы распределить его по отдельным заказам, привяжите запись к накладной ниже.</p><form class="general-payment-form" data-customer-id="${esc(c.id)}"><div class="form-grid three"><div class="field"><label>Сумма оплаты, ₴</label><input class="input" name="amount" type="number" min=".01" max="${debt(c.id).toFixed(2)}" step=".01" required></div><div class="field"><label>Дата оплаты</label><input class="input" name="date" type="datetime-local" value="${now()}"></div><div class="notice">Общий долг сейчас: <b>${cash(debt(c.id))}</b></div></div><div class="form-actions"><button class="btn primary">Записать в общий долг</button></div></form></div>`
+        : `<div class="notice top-gap">Общий долг погашен.</div>`;
+    return `<div class="profile-head"><div><h2>${esc(c.name)}</h2><p>${esc(c.phone || "Телефон не указан")} · ${esc(c.address || "Адрес не указан")}</p><button class="btn small top-gap" data-act="edit-client" data-id="${esc(c.id)}">Изменить данные</button></div><div class="balance-card"><span>Клиент должен</span><strong>${cash(debt(c.id))}</strong></div></div><div class="grid stats" style="grid-template-columns:repeat(3,minmax(0,1fr))">${stat("Заказано", cash(ordered), "Сумма накладных", "▧")}${stat("Оплачено", cash(paid), `Погашено ${overallPaidPercent}%`, "✓")}${stat("Общий долг", cash(debt(c.id)), "По всем накладным", "₴")}</div>${generalPayment}<div class="divider"></div><div class="row-between"><div><h2 class="section-title">Накладные клиента</h2><p class="small-text">Отметьте заказ, чтобы открыть его, посмотреть состав и записать оплату по нему.</p></div><label class="archive-toggle"><input type="checkbox" id="show-archived-invoices" ${showArchivedInvoices ? "checked" : ""}> Архив</label></div><div class="client-invoice-list">${invoiceCards}</div>${unlinkedPayments}<div class="divider"></div><h2 class="section-title">Заметки и история общения</h2><div class="client-chat">${notes.length ? notes.map((x) => `<div class="chat-entry"><div>${esc(x.text)}</div><time>${dt(x.date)}</time></div>`).join("") : empty("Заметок пока нет. Добавьте договорённости или важные детали.", "✎")}</div><form id="client-note" class="top-gap"><div class="field"><label>Новая заметка</label><textarea name="text" required placeholder="Что клиент заказал, что вы ему сообщили, о чём договорились…"></textarea></div><div class="form-actions"><button class="btn soft">＋ Добавить заметку</button></div></form>`;
   }
   function customers() {
     if (clientId && !find(db.customers, clientId)) clientId = "";
@@ -918,6 +928,32 @@
     view.querySelectorAll(".client-invoice-select").forEach((checkbox) => {
       checkbox.onchange = () => {
         activeCustomerInvoiceId = checkbox.checked ? checkbox.dataset.id : "";
+        customers();
+      };
+    });
+    const archivedInvoicesToggle = $("#show-archived-invoices");
+    if (archivedInvoicesToggle)
+      archivedInvoicesToggle.onchange = () => {
+        showArchivedInvoices = archivedInvoicesToggle.checked;
+        activeCustomerInvoiceId = "";
+        customers();
+      };
+    view.querySelectorAll(".general-payment-form").forEach((form) => {
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        const data = new FormData(form),
+          amount = n(data.get("amount")),
+          balance = debt(form.dataset.customerId);
+        if (form.dataset.customerId !== clientId || amount <= 0 || amount > balance + 0.001)
+          return toast("Проверьте сумму: она не должна превышать общий долг");
+        db.customerPayments.unshift({
+          id: id(),
+          customerId: clientId,
+          amount: Math.round(amount * 100) / 100,
+          date: new Date(data.get("date") || now()).toISOString(),
+        });
+        save();
+        toast("Оплата записана в общий долг клиента");
         customers();
       };
     });
@@ -1090,15 +1126,21 @@
     }
   }
   function invoiceHistory() {
-    return db.invoices.length
-      ? `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Номер</th><th>Клиент</th><th>Количество</th><th>Сумма</th><th>Долг</th><th></th></tr></thead><tbody>${db.invoices
-          .slice(0, 40)
+    const items = db.invoices
+      .filter((invoice) => showArchivedInvoices ? invoice.archived : !invoice.archived)
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    return items.length
+      ? `<div class="table-wrap"><table><thead><tr><th>Дата</th><th>Номер</th><th>Клиент</th><th>Количество</th><th>Итого</th><th>Оплата</th><th>Остаток</th><th>Курс</th><th></th></tr></thead><tbody>${items
+          .slice(0, 100)
           .map(
-            (x) =>
-              `<tr><td>${dt(x.date)}</td><td><b>${esc(x.number)}</b></td><td>${esc(x.customerName)}</td><td>${x.lines.reduce((s, l) => s + l.qty, 0)} шт.</td><td>${cash(x.total)}</td><td>${cash(x.total - x.paid)}</td><td><button class="btn small" data-act="print-saved" data-id="${x.id}">Печать</button></td></tr>`,
+            (x) => {
+              const remaining = Math.max(0, n(x.total) - n(x.paid)),
+                percent = n(x.total) ? Math.min(100, Math.round((n(x.paid) / n(x.total)) * 100)) : 100;
+              return `<tr class="${x.archived ? "archived-row" : ""}"><td>${dt(x.date)}</td><td><b>${percent === 100 ? "✓ " : ""}${esc(x.number)}</b>${x.archived ? '<span class="subline">В архиве</span>' : ""}</td><td>${esc(x.customerName)}</td><td>${x.lines.reduce((s, l) => s + l.qty, 0)} шт.</td><td>${cash(x.total)}<span class="subline">${cash(n(x.total) / (n(x.fxRate) || n(db.fx) || 1), "USD")}</span></td><td>${cash(x.paid)}<span class="subline">${percent}% оплачено</span></td><td>${cash(remaining)}<span class="subline">${cash(remaining / (n(x.fxRate) || n(db.fx) || 1), "USD")}</span></td><td>1 $ = ${(n(x.fxRate) || n(db.fx) || 1).toFixed(2)} ₴</td><td><div class="table-actions"><button class="btn small" data-act="print-saved" data-id="${x.id}">Открыть</button>${x.archived ? `<button class="btn small" data-act="restore-invoice" data-id="${x.id}">Вернуть</button>` : `<button class="btn small" data-act="archive-invoice" data-id="${x.id}">В архив</button>`}</div></td></tr>`;
+            },
           )
           .join("")}</tbody></table></div>`
-      : empty("Сохранённых накладных пока нет.", "▧");
+      : empty(showArchivedInvoices ? "Архив накладных пуст." : "Сохранённых накладных пока нет.", "▧");
   }
   function invoices() {
     if (!draft.length) draft = [{ productId: "", qty: 1, discountPercent: 0 }];
@@ -1108,7 +1150,7 @@
         "Накладные",
         "Выберите клиента и товары. Предпросмотр обновляется автоматически.",
       ) +
-      `<div class="split"><div class="card panel no-print"><div class="panel-head"><div><h2>Данные накладной</h2><p>Сохранение спишет товар со склада</p></div></div><form id="inv-form"><div class="form-grid"><div class="field span2"><label>Найти клиента</label><input class="input" id="inv-client-search" placeholder="Введите имя или фамилию"></div><div class="field span2"><label>Клиент</label><select id="inv-client" name="customerId" required>${clientOpts()}</select></div><div class="field"><label>Дата и время</label><input class="input" id="inv-date" name="date" type="datetime-local" value="${now()}"></div><div class="field"><label>Номер</label><input class="input" id="inv-number" name="number" value="НК-${String(db.invoices.length + 1).padStart(4, "0")}"></div><div class="field span2"><label>Поиск товара по названию или артикулу</label><input class="input" id="inv-search" placeholder="Название, артикул или размер"></div></div><div class="divider"></div><div class="row-between"><b style="font-size:12px">Товары в накладной</b><span class="small-text">Можно оформить предзаказ в минус</span></div><div id="invoice-lines" class="top-gap">${invoiceLineHtml()}</div><div class="line-add top-gap"><div class="field"><label>Добавить товар</label><select id="line-product">${productOpts()}</select></div><div class="field"><label>Количество</label><input class="input" id="line-qty" type="number" min="1" value="1"></div><button type="button" class="btn soft" data-act="add-line">＋ Строка</button></div><div class="divider"></div><div class="field"><label>Уже оплачено, ₴</label><input class="input" id="inv-paid" name="paid" type="number" min="0" step=".01" value="0"></div><div class="notice top-gap">Остаток суммы автоматически попадёт в баланс клиента.</div><div class="form-actions"><button class="btn primary">Сохранить накладную</button></div></form></div><div class="sticky"><div class="row-between no-print" style="margin-bottom:9px"><span class="small-text">Электронная накладная · предпросмотр</span><button class="btn small" data-act="print-current">Печать</button></div><div id="printable" class="invoice-paper">${preview()}</div></div></div><div class="card panel top-gap no-print"><div class="panel-head"><div><h2>Сохранённые накладные</h2><p>Последние документы</p></div></div>${invoiceHistory()}</div>`;
+      `<div class="split"><div class="card panel no-print"><div class="panel-head"><div><h2>Данные накладной</h2><p>Сохранение спишет товар со склада</p></div></div><form id="inv-form"><div class="form-grid"><div class="field span2"><label>Найти клиента</label><input class="input" id="inv-client-search" placeholder="Введите имя или фамилию"></div><div class="field span2"><label>Клиент</label><select id="inv-client" name="customerId" required>${clientOpts()}</select></div><div class="field"><label>Дата и время</label><input class="input" id="inv-date" name="date" type="datetime-local" value="${now()}"></div><div class="field"><label>Номер</label><input class="input" id="inv-number" name="number" value="НК-${String(db.invoices.length + 1).padStart(4, "0")}"></div><div class="field span2"><label>Поиск товара по названию или артикулу</label><input class="input" id="inv-search" placeholder="Название, артикул или размер"></div></div><div class="divider"></div><div class="row-between"><b style="font-size:12px">Товары в накладной</b><span class="small-text">Можно оформить предзаказ в минус</span></div><div id="invoice-lines" class="top-gap">${invoiceLineHtml()}</div><div class="line-add top-gap"><div class="field"><label>Добавить товар</label><select id="line-product">${productOpts()}</select></div><div class="field"><label>Количество</label><input class="input" id="line-qty" type="number" min="1" value="1"></div><button type="button" class="btn soft" data-act="add-line">＋ Строка</button></div><div class="divider"></div><div class="field"><label>Уже оплачено, ₴</label><input class="input" id="inv-paid" name="paid" type="number" min="0" step=".01" value="0"></div><div class="notice top-gap">Остаток суммы автоматически попадёт в баланс клиента.</div><div class="form-actions"><button class="btn primary">Сохранить накладную</button></div></form></div><div class="sticky"><div class="row-between no-print" style="margin-bottom:9px"><span class="small-text">Электронная накладная · предпросмотр</span><button class="btn small" data-act="print-current">Печать</button></div><div id="printable" class="invoice-paper">${preview()}</div></div></div><div class="card panel top-gap no-print"><div class="panel-head row-between"><div><h2>Сохранённые накладные</h2><p>Последние документы</p></div><label class="archive-toggle"><input type="checkbox" id="show-archived-invoices" ${showArchivedInvoices ? "checked" : ""}> Показать архив</label></div>${invoiceHistory()}</div>`;
     $("#inv-client")?.closest(".field")?.insertAdjacentHTML(
       "afterend",
       `<div class="field span2"><label>Способ отправки</label><select id="inv-delivery" name="deliveryMethod"><option value="">Не указан</option>${deliveryMethodOptions()}</select></div>`,
@@ -1165,6 +1207,7 @@
         total,
         paid,
         fxRate: n(db.fx) || 1,
+        archived: false,
       });
       if (paid > 0)
         db.customerPayments.unshift({
@@ -1207,6 +1250,11 @@
         q ? "Совпадения" : "Выберите клиента",
       );
       updateInvoice();
+    const archivedInvoicesToggle = $("#show-archived-invoices");
+    archivedInvoicesToggle.onchange = () => {
+      showArchivedInvoices = archivedInvoicesToggle.checked;
+      invoices();
+    };
     };
   }
   function notebook() {
@@ -1366,6 +1414,18 @@
     const b = e.target.closest("[data-act]");
     if (!b) return;
     const a = b.dataset.act;
+    if (a === "archive-invoice" || a === "restore-invoice") {
+      const invoice = find(db.invoices, b.dataset.id);
+      if (!invoice) return;
+      invoice.archived = a === "archive-invoice";
+      if (a === "restore-invoice") showArchivedInvoices = false;
+      if (activeCustomerInvoiceId === invoice.id) activeCustomerInvoiceId = "";
+      save();
+      toast(a === "archive-invoice" ? "Накладная перемещена в архив" : "Накладная возвращена из архива");
+      if (page === "customers") customers();
+      else invoices();
+      return;
+    }
     if (a === "link-legacy-payment") {
       const row = b.closest("tr"),
         payment = find(db.customerPayments, b.dataset.id),

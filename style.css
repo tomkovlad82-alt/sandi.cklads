@@ -856,6 +856,9 @@ tr:last-child td {
   border-color: #8bb5a5;
   box-shadow: 0 0 0 2px #247c7010;
 }
+.client-invoice-card.invoice-paid {
+  border-color: #c8dfd4;
+}
 .client-invoice-heading {
   display: grid;
   grid-template-columns: 20px minmax(110px, 1fr) repeat(3, minmax(78px, auto));
@@ -881,6 +884,33 @@ tr:last-child td {
 .client-invoice-content {
   border-top: 1px solid var(--line);
   padding: 14px;
+}
+.invoice-payment-progress {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 11px;
+}
+.progress-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #e8eeeb;
+}
+.progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+  transition: width 0.2s ease;
+}
+.invoice-paid .progress-track span {
+  background: #378464;
+}
+.invoice-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 .client-invoice-preview {
   min-height: 0;
